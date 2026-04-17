@@ -4,6 +4,7 @@ extends Node
 const EVENT_FINISH_CROSS := 1 << 0
 const TAIL_TICKS := 60  # ~1s slowdown footage after winner crosses
 const TICK_RATE_HZ := 60
+const MAX_TICKS := 120 * TICK_RATE_HZ  # hard cap: 2 minutes
 
 # Flat per-marble state layout: [pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w]
 const FLOATS_PER_MARBLE := 7
@@ -53,9 +54,11 @@ func track(marble_list: Array[RigidBody3D], line: FinishLine) -> void:
 	header.clear()
 	for i in range(_marble_count):
 		var m := marbles[i]
+		var c: Color = m.get_meta("color", Color.WHITE)
 		header.append({
 			"id": m.get_instance_id(),
 			"name": m.name,
+			"color": c,
 			"client_seed": String(_client_seeds[i]) if i < _client_seeds.size() else "",
 			"slot": int(_slots[i]) if i < _slots.size() else 0,
 		})
@@ -101,7 +104,10 @@ func _physics_process(_delta: float) -> void:
 		_states[off + 6] = q.w
 		off += FLOATS_PER_MARBLE
 	_pending_flags = 0
-	if _stop_tick >= 0 and tick >= _stop_tick:
+	var should_stop := (_stop_tick >= 0 and tick >= _stop_tick) or _ticks.size() >= MAX_TICKS
+	if should_stop:
+		if _ticks.size() >= MAX_TICKS and _stop_tick < 0:
+			push_warning("RECORDER: race timed out at %d ticks — no marble crossed the finish line" % MAX_TICKS)
 		_finalize()
 
 func _on_marble_crossed(_marble: RigidBody3D, _tick: int) -> void:
@@ -114,6 +120,7 @@ func _finalize() -> void:
 	recording = false
 	var frame_count := _ticks.size()
 	print("RECORDER: captured %d frames, %d marbles/frame" % [frame_count, _marble_count])
+	_print_results()
 	print("REVEAL: server_seed=%s" % FairSeed.to_hex(_server_seed))
 
 	var path := "user://replays/%d.bin" % _round_id
@@ -156,3 +163,18 @@ func _roundtrip_check(path: String) -> void:
 		ok = ok and (replay["server_seed"] as PackedByteArray) == _server_seed
 		ok = ok and int(read_header[0]["slot"]) == int(header[0]["slot"])
 	print("ROUNDTRIP: %s (%d frames, %d marbles)" % ["OK" if ok else "MISMATCH", read_frames.size(), read_header.size()])
+
+func _print_results() -> void:
+	if finish_line == null:
+		return
+	var placements := finish_line.get_placements()
+	var crossings := finish_line.get_crossings()
+	print("--- RACE RESULTS ---")
+	for i in range(placements.size()):
+		var m: RigidBody3D = placements[i]
+		var tick: int = crossings[m]
+		var time_s := "%.2f" % (float(tick) / float(TICK_RATE_HZ))
+		print("  #%d  %s  (tick %d, %ss)" % [i + 1, m.name, tick, time_s])
+	var dnf_count := _marble_count - placements.size()
+	if dnf_count > 0:
+		print("  DNF: %d marbles did not finish" % dnf_count)

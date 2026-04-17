@@ -41,6 +41,8 @@ static func _make_marble(
 	# Leaving it off saves a non-trivial Jolt sweep per substep.
 	marble.continuous_cd = false
 
+	marble.set_meta("color", color)
+
 	var mesh_inst := MeshInstance3D.new()
 	mesh_inst.mesh = shared_mesh
 	var mat := StandardMaterial3D.new()

@@ -3,7 +3,7 @@ extends Node3D
 const MARBLE_COUNT := 20
 
 func _ready() -> void:
-	_build_environment()
+	SceneHelpers.build_environment(self)
 	add_child(RampTrack.new())
 
 	var round_id := int(Time.get_unix_time_from_system())
@@ -24,20 +24,6 @@ func _ready() -> void:
 	recorder.set_round_context(round_id, server_seed, server_seed_hash, client_seeds, slots)
 	recorder.track(marbles, finish)
 	add_child(recorder)
-	add_child(FixedCamera.new())
-
-func _build_environment() -> void:
-	var light := DirectionalLight3D.new()
-	light.rotation_degrees = Vector3(-50, -30, 0)
-	light.shadow_enabled = true
-	add_child(light)
-
-	var env := WorldEnvironment.new()
-	var e := Environment.new()
-	e.background_mode = Environment.BG_SKY
-	var sky := Sky.new()
-	sky.sky_material = ProceduralSkyMaterial.new()
-	e.sky = sky
-	e.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.environment = e
-	add_child(env)
+	var cam := LeaderCamera.new()
+	add_child(cam)
+	cam.setup(marbles)

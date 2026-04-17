@@ -5,7 +5,7 @@ extends Node
 # the rail slot positions. See docs/fairness.md §Verification.
 
 func _ready() -> void:
-	var path := _latest_replay_path()
+	var path := SceneHelpers.latest_replay_path()
 	if path.is_empty():
 		push_error("no replays found in user://replays/")
 		get_tree().quit(1)
@@ -46,7 +46,6 @@ func _verify(replay: Dictionary) -> bool:
 	print("  slots OK: %d marbles across %d slots" % [header.size(), slot_count])
 
 	# 3. Check recorded first-frame positions match what SpawnRail would produce.
-	# Physics hasn't ticked on frame 0 yet, so the state equals the spawn state.
 	var frames: Array = replay["frames"]
 	if frames.is_empty():
 		push_error("replay has no frames")
@@ -60,19 +59,3 @@ func _verify(replay: Dictionary) -> bool:
 			return false
 	print("  positions OK: first frame matches SpawnRail for all %d marbles" % header.size())
 	return true
-
-func _latest_replay_path() -> String:
-	var dir := DirAccess.open("user://replays/")
-	if dir == null:
-		return ""
-	var best := ""
-	var best_mod := 0
-	for name in dir.get_files():
-		if not name.ends_with(".bin"):
-			continue
-		var full := "user://replays/%s" % name
-		var mod := FileAccess.get_modified_time(full)
-		if mod >= best_mod:
-			best_mod = mod
-			best = full
-	return best

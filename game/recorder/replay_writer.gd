@@ -38,7 +38,9 @@ static func write(path: String, replay: Dictionary) -> Error:
 	hdr.put_u32(header.size())
 	for m in header:
 		hdr.put_u32(int(m["id"]) & 0xFFFFFFFF)
-		hdr.put_u32(0)  # rgba — still stubbed, see PROGRESS.md open question
+		var c: Color = m.get("color", Color.WHITE)
+		var rgba := (int(c.r8) << 24) | (int(c.g8) << 16) | (int(c.b8) << 8) | int(c.a8)
+		hdr.put_u32(rgba)
 		var name_bytes: PackedByteArray = String(m["name"]).to_utf8_buffer()
 		hdr.put_u8(name_bytes.size())
 		hdr.put_data(name_bytes)
