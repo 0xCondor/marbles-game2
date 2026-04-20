@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Marbles Game — Preview</title>
+<style>
+	html, body { margin: 0; padding: 0; height: 100%; background: #0b0d12; color: #e9ecf1; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+	canvas { display: block; }
+	#hud { position: fixed; top: 16px; left: 16px; font-size: 14px; line-height: 1.5; text-shadow: 0 1px 2px rgba(0,0,0,0.8); pointer-events: none; }
+	#hud .k { opacity: 0.55; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+	#hud .v { font-size: 20px; font-weight: 600; }
+	#leader-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; background: #fff; }
+	#overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: none; align-items: center; justify-content: center; backdrop-filter: blur(4px); }
+	#overlay.show { display: flex; }
+	#results { background: #151923; border: 1px solid #252b38; border-radius: 12px; padding: 24px 32px; min-width: 320px; max-width: 420px; }
+	#results h2 { margin: 0 0 16px 0; font-size: 16px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.6; }
+	#results ol { margin: 0; padding: 0 0 0 24px; }
+	#results li { padding: 6px 0; display: flex; align-items: center; gap: 10px; }
+	#results li .swatch { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+	#results li .t { margin-left: auto; opacity: 0.55; font-variant-numeric: tabular-nums; font-size: 13px; }
+	#results button { margin-top: 20px; width: 100%; padding: 10px; background: #2a6df4; color: #fff; border: 0; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+	#results button:hover { background: #3479ff; }
+	#brand { position: fixed; bottom: 14px; right: 18px; font-size: 11px; opacity: 0.35; letter-spacing: 0.05em; }
+</style>
+</head>
+<body>
+<div id="hud">
+	<div class="k">Leader</div>
+	<div class="v"><span id="leader-dot"></span><span id="leader-name">—</span></div>
+	<div class="k" style="margin-top:10px">Time</div>
+	<div class="v" id="timer">0.00s</div>
+	<div class="k" style="margin-top:10px">Commit</div>
+	<div style="font-family:ui-monospace,monospace; font-size:11px; opacity:0.55" id="commit">—</div>
+</div>
+<div id="overlay">
+	<div id="results">
+		<h2>Race Results</h2>
+		<ol id="results-list"></ol>
+		<button id="restart">New Race</button>
+	</div>
+</div>
+<div id="brand">marbles-game preview · three.js + cannon-es</div>
+
+<script type="importmap">
+{
+	"imports": {
+		"three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+		"cannon-es": "https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js"
+	}
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
+
+// ---- Config (mirrors game/tracks/ramp_track.gd + game/sim/spawn_rail.gd) ----
+const RAMP_LENGTH = 30;
+const RAMP_WIDTH = 6;
+const RAMP_ANGLE_DEG = 20;
+const MARBLE_RADIUS = 0.3;
+const MARBLE_COUNT = 20;
+const SLOT_COUNT = 24;
+const EDGE_MARGIN = 0.4;
+const Y_BASE = 5.8;
+const Z_BASE = 14.0;
+const Y_STAGGER = 0.35;
+
+// ---- Three.js scene ----
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87a8c9);
+scene.fog = new THREE.Fog(0x87a8c9, 50, 140);
+
+const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 300);
+camera.position.set(0, 12, 22);
+
+const sun = new THREE.DirectionalLight(0xffffff, 2.4);
+sun.position.set(-15, 25, 10);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024);
+sun.shadow.camera.left = -30;
+sun.shadow.camera.right = 30;
+sun.shadow.camera.top = 30;
+sun.shadow.camera.bottom = -30;
+sun.shadow.camera.near = 1;
+sun.shadow.camera.far = 80;
+scene.add(sun);
+scene.add(new THREE.HemisphereLight(0xcfe0ff, 0x1a1f28, 0.8));
+
+// ---- Physics world (Cannon) ----
+const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -18, 0) });
+world.broadphase = new CANNON.SAPBroadphase(world);
+world.allowSleep = true;
+
+const trackMat = new CANNON.Material('track');
+const marbleMat = new CANNON.Material('marble');
+world.addContactMaterial(new CANNON.ContactMaterial(trackMat, marbleMat, { friction: 0.35, restitution: 0.3 }));
+world.addContactMaterial(new CANNON.ContactMaterial(marbleMat, marbleMat, { friction: 0.1, restitution: 0.25 }));
+
+// ---- Ramp + walls + ground ----
+const angleRad = THREE.MathUtils.degToRad(RAMP_ANGLE_DEG);
+const rampQuat = new CANNON.Quaternion();
+rampQuat.setFromEuler(-angleRad, 0, 0, 'XYZ');
+
+function addBoxStatic(sizeVec, posVec, quat, color = 0x9aa4b2) {
+	const body = new CANNON.Body({ mass: 0, material: trackMat, shape: new CANNON.Box(new CANNON.Vec3(sizeVec.x / 2, sizeVec.y / 2, sizeVec.z / 2)) });
+	body.position.copy(posVec);
+	if (quat) body.quaternion.copy(quat);
+	world.addBody(body);
+	const mesh = new THREE.Mesh(
+		new THREE.BoxGeometry(sizeVec.x, sizeVec.y, sizeVec.z),
+		new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0.05 })
+	);
+	mesh.castShadow = false;
+	mesh.receiveShadow = true;
+	mesh.position.copy(posVec);
+	if (quat) mesh.quaternion.copy(quat);
+	scene.add(mesh);
+	return { body, mesh };
+}
+
+addBoxStatic(new CANNON.Vec3(RAMP_WIDTH, 0.5, RAMP_LENGTH), new CANNON.Vec3(0, 0, 0), rampQuat, 0x8a93a3);
+addBoxStatic(new CANNON.Vec3(0.2, 1.0, RAMP_LENGTH), new CANNON.Vec3(-RAMP_WIDTH / 2, 0.5, 0), rampQuat, 0x6b727f);
+addBoxStatic(new CANNON.Vec3(0.2, 1.0, RAMP_LENGTH), new CANNON.Vec3(RAMP_WIDTH / 2, 0.5, 0), rampQuat, 0x6b727f);
+addBoxStatic(new CANNON.Vec3(80, 0.5, 80), new CANNON.Vec3(0, -12, 0), null, 0x3f4450);
+
+// ---- Finish line: physics trigger + visible banner ----
+const finishBody = new CANNON.Body({
+	isTrigger: true,
+	mass: 0,
+	shape: new CANNON.Box(new CANNON.Vec3((RAMP_WIDTH + 2) / 2, 6, 0.2)),
+});
+finishBody.position.set(0, -3, -13);
+world.addBody(finishBody);
+
+const finishBanner = new THREE.Mesh(
+	new THREE.PlaneGeometry(RAMP_WIDTH + 1, 3),
+	new THREE.MeshBasicMaterial({ color: 0xff2626, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthTest: false })
+);
+finishBanner.position.set(0, -1.5, -13);
+finishBanner.renderOrder = 10;
+scene.add(finishBanner);
+
+// ---- Deterministic spawn slots (mirror SpawnRail + simple fairness hash) ----
+async function sha256(str) {
+	const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+	return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+function deriveSlots(serverSeedHex, roundId, count) {
+	// Per-marble hash: serverSeed||roundId||index → take first 4 bytes mod SLOT_COUNT, probe on collision.
+	const taken = new Set();
+	const slots = [];
+	for (let i = 0; i < count; i++) {
+		// Simple xmur3-ish hash on the ascii concat — good enough for a preview. Real game uses SHA-256 (fairness/seed.gd).
+		let h = 2166136261;
+		const s = serverSeedHex + ':' + roundId + ':' + i;
+		for (let k = 0; k < s.length; k++) { h ^= s.charCodeAt(k); h = Math.imul(h, 16777619); }
+		let slot = (h >>> 0) % SLOT_COUNT;
+		while (taken.has(slot)) slot = (slot + 1) % SLOT_COUNT;
+		taken.add(slot);
+		slots.push(slot);
+	}
+	return slots;
+}
+function slotPosition(slot, dropOrder) {
+	const usable = RAMP_WIDTH - 2 * EDGE_MARGIN;
+	const x = -RAMP_WIDTH / 2 + EDGE_MARGIN + slot * (usable / (SLOT_COUNT - 1));
+	const y = Y_BASE + dropOrder * Y_STAGGER;
+	return new THREE.Vector3(x, y, Z_BASE);
+}
+function hsvColor(i, n) {
+	const c = new THREE.Color();
+	c.setHSL(i / Math.max(n, 1), 0.75, 0.55);
+	return c;
+}
+
+// ---- Marbles ----
+const marbles = [];
+const sphereGeo = new THREE.SphereGeometry(MARBLE_RADIUS, 20, 16);
+function spawnMarbles(slots) {
+	for (let i = 0; i < slots.length; i++) {
+		const pos = slotPosition(slots[i], i);
+		const color = hsvColor(i, slots.length);
+		const body = new CANNON.Body({ mass: 1, material: marbleMat, shape: new CANNON.Sphere(MARBLE_RADIUS) });
+		body.position.set(pos.x, pos.y, pos.z);
+		body.linearDamping = 0.01;
+		body.angularDamping = 0.05;
+		world.addBody(body);
+		const mesh = new THREE.Mesh(sphereGeo, new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.15 }));
+		mesh.castShadow = true;
+		mesh.position.copy(pos);
+		scene.add(mesh);
+		marbles.push({ body, mesh, name: `Marble_${String(i).padStart(2, '0')}`, color, finishedTick: -1 });
+	}
+}
+
+// ---- Finish detection ----
+const placements = [];
+world.addEventListener('beginContact', (e) => {
+	// isTrigger bodies still fire contacts in cannon-es.
+});
+function checkFinishCrossings(tick) {
+	// Manual AABB check — cheaper than leaning on trigger events.
+	for (const m of marbles) {
+		if (m.finishedTick >= 0) continue;
+		if (m.body.position.z <= -13) {
+			m.finishedTick = tick;
+			placements.push(m);
+			if (placements.length === 1) console.log(`WINNER: ${m.name} at tick ${tick}`);
+		}
+	}
+}
+
+// ---- Leader camera (mirrors LeaderCamera.gd) ----
+const camOffset = new THREE.Vector3(0, 5, 8);
+const camTarget = new THREE.Vector3();
+const camDesired = new THREE.Vector3();
+function updateCamera(dt) {
+	let best = marbles[0];
+	for (let i = 1; i < marbles.length; i++) {
+		if (marbles[i].body.position.z < best.body.position.z) best = marbles[i];
+	}
+	camTarget.set(best.body.position.x, best.body.position.y, best.body.position.z);
+	camDesired.copy(camTarget).add(camOffset);
+	camera.position.lerp(camDesired, Math.min(1, 4 * dt));
+	camera.lookAt(camTarget);
+}
+
+// ---- Game loop ----
+const PHYSICS_HZ = 60;
+const PHYSICS_DT = 1 / PHYSICS_HZ;
+const MAX_TICKS = 120 * PHYSICS_HZ;
+let tick = 0;
+let raceStart = 0;
+let raceEnd = -1;
+let started = false;
+let accum = 0;
+let prev = performance.now();
+
+function animate(now) {
+	const dt = Math.min(0.05, (now - prev) / 1000);
+	prev = now;
+	accum += dt;
+	while (accum >= PHYSICS_DT) {
+		if (started && raceEnd < 0) {
+			world.step(PHYSICS_DT);
+			checkFinishCrossings(tick);
+			tick++;
+			if (placements.length === marbles.length || tick >= MAX_TICKS) {
+				raceEnd = tick;
+				showResults();
+			}
+		}
+		accum -= PHYSICS_DT;
+	}
+	for (const m of marbles) {
+		m.mesh.position.copy(m.body.position);
+		m.mesh.quaternion.copy(m.body.quaternion);
+	}
+	if (started) {
+		updateCamera(dt);
+		updateHUD();
+	}
+	renderer.render(scene, camera);
+	requestAnimationFrame(animate);
+}
+
+// ---- HUD ----
+const elLeaderName = document.getElementById('leader-name');
+const elLeaderDot = document.getElementById('leader-dot');
+const elTimer = document.getElementById('timer');
+const elCommit = document.getElementById('commit');
+const elOverlay = document.getElementById('overlay');
+const elList = document.getElementById('results-list');
+function updateHUD() {
+	let best = marbles[0];
+	for (let i = 1; i < marbles.length; i++) {
+		if (marbles[i].body.position.z < best.body.position.z) best = marbles[i];
+	}
+	elLeaderName.textContent = best.name;
+	elLeaderDot.style.background = '#' + best.color.getHexString();
+	const elapsed = raceEnd < 0 ? (performance.now() - raceStart) / 1000 : (raceEnd / PHYSICS_HZ);
+	elTimer.textContent = elapsed.toFixed(2) + 's';
+}
+function showResults() {
+	elList.innerHTML = '';
+	for (let i = 0; i < placements.length; i++) {
+		const m = placements[i];
+		const li = document.createElement('li');
+		li.innerHTML = `<span class="swatch" style="background:#${m.color.getHexString()}"></span>${m.name}<span class="t">${(m.finishedTick / PHYSICS_HZ).toFixed(2)}s</span>`;
+		elList.appendChild(li);
+	}
+	const dnf = marbles.length - placements.length;
+	if (dnf > 0) {
+		const li = document.createElement('li');
+		li.innerHTML = `<span class="swatch" style="background:#444"></span>DNF<span class="t">${dnf} marbles</span>`;
+		elList.appendChild(li);
+	}
+	elOverlay.classList.add('show');
+}
+document.getElementById('restart').addEventListener('click', () => location.reload());
+
+// ---- Boot ----
+async function boot() {
+	// Simulated commit/reveal: random server seed, hash it, show the commit.
+	const serverSeed = crypto.getRandomValues(new Uint8Array(32));
+	const serverSeedHex = Array.from(serverSeed).map(b => b.toString(16).padStart(2, '0')).join('');
+	const serverSeedHash = await sha256(serverSeedHex);
+	const roundId = Date.now();
+	elCommit.textContent = serverSeedHash.slice(0, 16) + '…';
+	console.log('COMMIT: round_id=%d server_seed_hash=%s', roundId, serverSeedHash);
+
+	const slots = deriveSlots(serverSeedHex, roundId, MARBLE_COUNT);
+	spawnMarbles(slots);
+	raceStart = performance.now();
+	started = true;
+	console.log('REVEAL will print at race end. server_seed=%s', serverSeedHex);
+}
+window.addEventListener('resize', () => {
+	renderer.setSize(window.innerWidth, window.innerHeight);
+	camera.aspect = window.innerWidth / window.innerHeight;
+	camera.updateProjectionMatrix();
+});
+boot();
+requestAnimationFrame(animate);
+</script>
+</body>
+</html>
