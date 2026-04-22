@@ -42,9 +42,24 @@ Running log of what's done, mapped against [PLAN.md](PLAN.md) milestones. Update
 - **M3.3 — replay format v2** done. `PROTOCOL_VERSION = 2` in [game/recorder/replay_writer.gd](game/recorder/replay_writer.gd); format now carries `server_seed`, `server_seed_hash`, `slot_count`, and per-marble `client_seed` + `spawn_slot`. Writer signature changed to a single `replay: Dictionary` arg. Reader rejects non-v2 files up front. Round-trip still verifies seed + slot fidelity alongside tick/pos.
 - **M3.4 — verifier** done. [game/verify_main.tscn](game/verify_main.tscn) + [game/verify_main.gd](game/verify_main.gd) headless scene: loads the latest replay, checks `SHA-256(server_seed) == server_seed_hash`, re-derives all slots from public inputs, and confirms first-frame positions equal `SpawnRail.slot_position(slot, i)` for every marble. Exits with status 0/1.
 
+### Performance & polish pass (branch: `claude/improve-game-performance-tbfeg`)
+- **Perf: flat buffer recording.** TickRecorder rewritten from `Array[Dictionary]` to flat `PackedFloat32Array` + `PackedInt32Array` + `PackedByteArray` — zero per-tick dict allocations during physics. ~10× less memory during a race.
+- **Perf: shared marble resources.** MarbleSpawner now builds one `SphereMesh`, `SphereShape3D`, and `PhysicsMaterial` shared across all 20 marbles. Renderer can batch draw calls; physics shares shape data.
+- **Perf: CCD disabled.** `continuous_cd = false` — marbles on a 20° ramp at 60Hz never approach the tunneling threshold.
+- **Perf: streaming writer.** ReplayWriter streams per-frame via a fixed-size `StreamPeerBuffer` into `FileAccess` — peak RAM is now O(marble_count) not O(total_frames × marble_count).
+- **Perf: playback flat arrays.** PlaybackPlayer pre-flattens loaded frames into a single `PackedFloat32Array` at load time — `_process` does direct indexed reads instead of nested Dictionary lookups.
+- **Color pipeline end-to-end.** Marble color flows `MarbleSpawner` (set_meta) → recorder header → writer (real rgba u32) → reader → playback. The `rgba=0` stub is gone.
+- **Safety cap.** TickRecorder: `MAX_TICKS = 120 * 60` (2 min) hard cap prevents infinite recording if no marble crosses the finish line.
+- **Leader camera.** [game/cameras/leader_camera.gd](game/cameras/leader_camera.gd) — smooth-follow camera tracking the leading marble (lowest Z = furthest downhill). Replaces FixedCamera in `main.tscn`.
+- **Visible finish line.** Semi-transparent red banner with emission on the FinishLine Area3D.
+- **Ground plane.** `RampTrack` adds a static body at y=-12 so marbles that fly off the ramp land instead of falling into the void.
+- **Race results.** Recorder prints full ordered standings (#1..#N with tick and wall-clock time) + DNF count at finalization. FinishLine exposes `get_placements()`.
+- **DRY: SceneHelpers.** [game/scene_helpers.gd](game/scene_helpers.gd) — extracted duplicate `_build_environment()` and `_latest_replay_path()` from main, playback, and verifier scenes.
+- **Browser demo.** [demo.html](demo.html) — standalone HTML5 preview (Three.js + Cannon-es via CDN) replicating the marble race visually. Not the Godot build — purely a concept preview for meetings.
+
 ## In progress
 
-_Nothing — M3 bar hit; next is M4._
+_Nothing — perf/polish pass done; next is M4._
 
 ## Not started
 
@@ -58,7 +73,7 @@ _Nothing — M3 bar hit; next is M4._
 - Engine: **Godot 4.6.2**, Jolt as 3D physics backend.
 - Language: **GDScript** first. Revisit C# only if tick-serializer profiling forces it.
 - Repo structure: **single Godot project** with multiple export presets (sim vs web), not two separate projects.
-- Physics tick rate: **60 Hz** for M1. Wire tick rate TBD in M2 (see [docs/tick-schema.md](docs/tick-schema.md) open questions).
+- Physics tick rate: **60 Hz** (locked in `project.godot`). Wire tick rate TBD in M5.
 
 ## Open questions (see PLAN.md §7 and doc stubs)
 
@@ -66,4 +81,3 @@ _Nothing — M3 bar hit; next is M4._
 - Tick byte layout (raw vs delta-encoded).
 - Web bundle budget — Godot Web typically 15–30 MB; target <20 MB for casino iframes.
 - Headless Jolt stability on Linux Dedicated Server export vs Windows editor.
-- **Marble color plumbing.** Writer stubs `rgba=0` because color was random-per-spawn in the sim and isn't surfaced to the recorder header. Fix either in M2.5 (thread color through `MarbleSpawner.spawn` return) or M3 (seeded spawns make color deterministic anyway).
