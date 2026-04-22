@@ -2,7 +2,7 @@
 
 3D physics marble race game, designed for online casino integration (crypto-first). First-to-finish wins the pot.
 
-See [PLAN.md](PLAN.md) for the full development plan, [PROGRESS.md](PROGRESS.md) for what's done. Current status: **M3 done + performance & polish pass** — provably-fair pipeline, leader camera, race results, browser demo. Next up: M4 round state machine + server glue.
+See [PLAN.md](PLAN.md) for the full development plan, [PROGRESS.md](PROGRESS.md) for what's done. Current status: **M4 done** — round state machine with `WAITING → BUY_IN → RACING → SETTLE` loop, mock buy-ins, payout calculator, per-round audit trail. Next up: M5 Web client + WebSocket streaming.
 
 ## Quick preview (no Godot needed)
 
@@ -41,11 +41,12 @@ Or just open Godot → Import → point at [game/project.godot](game/project.god
 
 ### Running the current prototype
 
-Three end-to-end scenes, all runnable headlessly:
+Four end-to-end scenes, all runnable headlessly:
 
 | Scene | What it does |
 |---|---|
-| `res://main.tscn` | Generate `server_seed`, publish hash, run seeded race with leader camera, write replay to `user://replays/<round>.bin`, print full race results, reveal seed |
+| `res://round_main.tscn` | **Round loop** — continuous `WAITING → BUY_IN → RACING → SETTLE` cycle with mock buy-ins, payout calculator, per-round commit/reveal and replay archive |
+| `res://main.tscn` | Single race: generate `server_seed`, publish hash, run seeded race with leader camera, write replay, print full race results, reveal seed |
 | `res://playback_main.tscn` | Load latest replay, render visual-only marbles with real colors driven by interpolated tick frames |
 | `res://verify_main.tscn` | Headless verifier: re-derive spawn slots from the revealed seed and confirm they match the recording |
 

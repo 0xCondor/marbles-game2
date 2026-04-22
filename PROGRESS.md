@@ -4,7 +4,7 @@ Running log of what's done, mapped against [PLAN.md](PLAN.md) milestones. Update
 
 ## Current milestone
 
-**M3 — seeded spawns + provably-fair.** Bar hit (2026-04-15): server_seed → SHA-256 commit → seeded spawn slots → race → reveal → third-party verifier re-derives slots + confirms first-frame positions match `SpawnRail`. Only M2.5 quantization remains optional. Next: M4 round state machine + server glue.
+**M4 — round state machine + server glue.** Round loop running: `WAITING → BUY_IN → RACING → SETTLE` with configurable timers, mock buy-ins (random 2–20 marbles per round), per-round commit/reveal, payout calculator with house-edge stub, automatic teardown/rebuild between rounds. Each round writes a replay for audit trail. Next: M5 Web client + WebSocket streaming.
 
 ## Done
 
@@ -57,14 +57,19 @@ Running log of what's done, mapped against [PLAN.md](PLAN.md) milestones. Update
 - **DRY: SceneHelpers.** [game/scene_helpers.gd](game/scene_helpers.gd) — extracted duplicate `_build_environment()` and `_latest_replay_path()` from main, playback, and verifier scenes.
 - **Browser demo.** [demo.html](demo.html) — standalone HTML5 preview (Three.js + Cannon-es via CDN) replicating the marble race visually. Not the Godot build — purely a concept preview for meetings.
 
+### M4 progress
+- **M4.0 — round state machine** done. [game/round/round_state_machine.gd](game/round/round_state_machine.gd) — FSM with `WAITING (5s) → BUY_IN (15s) → RACING (variable) → SETTLE (8s)` cycle. Emits `state_changed`, `buy_in_opened`, `race_started`, `race_settled` signals. Configurable timers. Automatic looping.
+- **M4.1 — payout calculator** done. [game/round/payout_calculator.gd](game/round/payout_calculator.gd) — winner-takes-all stub with configurable `house_edge` (default 5%) and `buy_in_per_marble`. Prints pot breakdown. Ready for operator config injection.
+- **M4.2 — round loop scene** done. [game/round_main.tscn](game/round_main.tscn) + [game/round_main.gd](game/round_main.gd) — orchestrates the full loop: generates seed at BUY_IN, spawns mock players (random 2–20), sets up race (marbles + finish line + recorder + leader camera), detects race end via `recorder.recording`, calculates payouts at SETTLE, tears down all race objects for next round. Each round writes a replay to `user://replays/` for audit.
+- **M4.3 — mock buy-in** done. During BUY_IN phase, `round_main.gd` auto-generates a random number of marbles with empty client_seeds. In production, this becomes real API-driven player registration.
+
 ## In progress
 
-_Nothing — perf/polish pass done; next is M4._
+_Nothing — M4 bar hit; next is M5._
 
 ## Not started
 
 - **M2.5 — quantization pass (optional)** — swap raw floats for i24 mm + smallest-three quat per [docs/tick-schema.md:39-42](docs/tick-schema.md#L39-L42). Defer unless file size matters.
-- **M4** — round state machine + [server/](server/) glue.
 - **M5** — Godot Web client + WebSocket replay streaming.
 - **M6** — track library (3–5 tracks) + polish / juice.
 
