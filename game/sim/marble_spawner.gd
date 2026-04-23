@@ -5,12 +5,13 @@ const RADIUS := 0.3
 
 # Deterministic-by-slot spawn. `slots[i]` is the spawn slot for marble i.
 # `colors[i]` (optional, same length as slots) overrides the default HSV-by-index color.
+# `rail` resolves slot indices to world positions — different tracks have different rails.
 #
 # Perf: mesh, collision shape, and physics material are built once and shared
 # across all marbles. Godot ref-counts Resource, so sharing is safe and lets the
 # renderer/physics backend amortize setup + batch better. Individual albedo
 # materials are still per-marble since each marble has a unique color.
-static func spawn(parent: Node, slots: Array, colors: Array = []) -> Array[RigidBody3D]:
+static func spawn(parent: Node, rail: SpawnRail, slots: Array, colors: Array = []) -> Array[RigidBody3D]:
 	var marbles: Array[RigidBody3D] = []
 	var shared_mesh := SphereMesh.new()
 	shared_mesh.radius = RADIUS
@@ -20,12 +21,13 @@ static func spawn(parent: Node, slots: Array, colors: Array = []) -> Array[Rigid
 	var shared_phys_mat := PhysicsMaterials.marble()
 	for i in range(slots.size()):
 		var color: Color = colors[i] if i < colors.size() else Color.from_hsv(float(i) / max(slots.size(), 1), 0.8, 0.95)
-		var marble := _make_marble(i, int(slots[i]), color, shared_mesh, shared_shape, shared_phys_mat)
+		var marble := _make_marble(rail, i, int(slots[i]), color, shared_mesh, shared_shape, shared_phys_mat)
 		parent.add_child(marble)
 		marbles.append(marble)
 	return marbles
 
 static func _make_marble(
+	rail: SpawnRail,
 	drop_order: int,
 	slot: int,
 	color: Color,
@@ -55,5 +57,5 @@ static func _make_marble(
 	marble.add_child(shape)
 
 	marble.physics_material_override = shared_phys_mat
-	marble.position = SpawnRail.slot_position(slot, drop_order)
+	marble.position = rail.slot_position(slot, drop_order)
 	return marble

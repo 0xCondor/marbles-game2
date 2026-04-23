@@ -31,6 +31,21 @@ spawn_slot = h[0..4] interpreted as u32 BE, mod SLOT_COUNT
 
 `SLOT_COUNT` is a track-specific constant (e.g. 24 slots across the spawn rail). If two marbles hash to the same slot, advance to the next free slot deterministically by scanning `(spawn_slot + 1) mod SLOT_COUNT` until one is free. This resolution rule is part of the protocol — document any change loudly.
 
+## Color derivation
+
+The same 32-byte `h = _hash_marble(...)` also produces the marble's display color, reusing bytes that the slot derivation doesn't touch:
+
+```
+R = h[4]
+G = h[5]
+B = h[6]
+A = 0xFF
+```
+
+Packed as a big-endian u32 (`R << 24 | G << 16 | B << 8 | A`) in the replay header's `rgba` field. No floating-point, no HSV, no palette mapping — a verifier in any language checks the packing directly. Some marbles can come out dark or muddy by chance; this is acceptable for MVP, and a cosmetic palette remap can be added later *without* changing the canonical bytes.
+
+**Order invariant (load-bearing):** marbles MUST be assigned slots in strictly ascending `marble_index` order (0, 1, 2, …, N-1). Because linear probing's outcome depends on which slots are already taken when each marble is processed, re-ordering the input list produces a *different* valid-looking assignment and a verifier will reject the round. Any implementation — server, client verifier, third-party audit tool — that iterates the marble list in a different order is **wrong**, not just "a different convention". If the need to process marbles out of order ever arises (e.g. parallel per-marble verification), switch the whole protocol to a seeded Fisher-Yates shuffle and bump `PROTOCOL_VERSION` — do not try to "fix" linear probing to be order-independent, it can't be.
+
 ## Round lifecycle
 
 1. **WAITING:** server generates `server_seed`, stores it securely, publishes `server_seed_hash` and the track id.
@@ -46,10 +61,17 @@ Given an archived round, a verifier:
 2. Re-derives spawn slots from the inputs. Must match the recorded spawn positions.
 3. (Optional, harder) Re-runs the sim with those spawns and confirms the recorded tick data is consistent. This requires the same Godot/Jolt build and is **not bit-deterministic across platforms** — see the determinism note in [../PLAN.md](../PLAN.md). Visual/outcome match is the bar, not bit-exactness.
 
+## Track selection (non-fairness, v3)
+
+The track a round uses (`track_id` in the replay header, see [tick-schema.md](tick-schema.md) §v3) is **not** part of the fairness derivation as of M6.0. It's picked by the server with a deterministic hash of `round_id` (see [`roundd.selectTrack`](../server/cmd/roundd/main.go)), plus a "no back-to-back repeats" rule applied between rounds. Verifiers trust the manifest's `track_id` to know which `Track` subclass to re-instantiate when re-deriving spawn positions.
+
+Making track selection fairness-chained (derive from `server_seed || round_id`) is a future hardening — probably a PROTOCOL_VERSION bump beyond v3. The reason it's not in MVP: the operator commits `server_seed_hash` **before buy-in**, so even a malicious operator can't pick a player-advantageous track *in reaction to* specific bets. They could in principle bias the rotation ahead of time, but that attack is strictly weaker than seed-choice (which the threat model below already addresses). Revisit when integrating with a real RGS that has tighter certification requirements.
+
 ## Threat model — what this protocol does NOT protect against
 
 - Server colluding with a specific player to **choose which `server_seed`** from many pre-generated candidates to commit to. Mitigation: commit to a chain of future seeds in advance (hash chain), or mix in a public beacon (e.g. future Bitcoin block hash) that the server can't predict.
 - Server withholding buy-ins after seeing the seed. Mitigation: seed hash published **before** buy-in opens (not just before it closes).
+- Server biasing the track rotation pre-commit (track selection is not yet fairness-chained — see above). Mitigation: fold `server_seed` into `track_id` derivation in a future protocol version.
 - Client-side cheating. Not applicable — clients are passive replay viewers.
 
 ## Open questions
