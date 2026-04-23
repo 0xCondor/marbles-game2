@@ -4,11 +4,16 @@
 
 See [PLAN.md](PLAN.md) for the full development plan, [PROGRESS.md](PROGRESS.md) for what's done. Current status: **M5 done** — archive HTTP API serves completed rounds, `web_main.tscn` (Godot Web export) fetches and renders them, live WebSocket streaming is wired end-to-end (sim → TCP → hub → WS subscribers), and `live_main.tscn` is the Godot live client that subscribes to `/live/{id}` and renders tick-by-tick. Next candidates: M6 polish (boot-splash branding, cinematic camera, juice) or M2.5 tick quantization.
 
+## Quick preview (no Godot needed)
+
+Open **[demo.html](demo.html)** in any browser — standalone Three.js + Cannon-es preview of the marble race with leader camera, finish banner, and race results. Not the production build, just a concept demo.
+
 ## Repo layout
 
 ```
 marbles-game/
 ├── PLAN.md           # Development plan (scope, architecture, milestones)
+├── demo.html         # Browser preview (Three.js, no install needed)
 ├── game/             # Godot 4 project (both sim and client targets)
 ├── server/           # Backend glue (not started)
 ├── ops/              # Dockerfiles, CI (not started)

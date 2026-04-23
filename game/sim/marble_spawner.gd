@@ -49,6 +49,9 @@ static func _make_marble(
 	mesh_inst.mesh = shared_mesh
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = color
+	mat.roughness = 0.25
+	mat.metallic = 0.3
+	mat.metallic_specular = 0.6
 	mesh_inst.material_override = mat
 	marble.add_child(mesh_inst)
 
