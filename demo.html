@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>MARBLES — Crypto Casino Race</title>
+<style>
+	*{margin:0;padding:0;box-sizing:border-box}
+	html,body{height:100%;background:#0b0d12;color:#e9ecf1;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;overflow:hidden}
+	canvas{display:block}
+	/* HUD top bar */
+	#top-bar{position:fixed;top:0;left:50%;transform:translateX(-50%);background:rgba(5,6,10,0.88);border-radius:0 0 12px 12px;padding:8px 28px;display:flex;gap:28px;align-items:center;z-index:10}
+	#top-bar .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.08em;opacity:.5}
+	#top-bar .val{font-size:20px;font-weight:600}
+	#state{color:#66d9ff}
+	#timer{color:#fff;font-variant-numeric:tabular-nums}
+	#pot{color:#ffd94a}
+	#count{color:#999;font-size:14px}
+	/* Countdown */
+	#countdown{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:30;pointer-events:none}
+	#countdown .num{font-size:140px;font-weight:800;color:#fff;text-shadow:0 0 40px rgba(255,217,74,.5);transition:transform .25s ease-out,opacity .2s}
+	/* Winner overlay */
+	#winner-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:20;backdrop-filter:blur(4px)}
+	#winner-box{background:#151923;border:2px solid #ffd94a;border-radius:16px;padding:28px 44px;text-align:center;transform:scale(.5);transition:transform .4s cubic-bezier(.34,1.56,.64,1)}
+	#winner-box.show{transform:scale(1)}
+	#winner-box h2{font-size:36px;color:#ffd94a;margin-bottom:8px}
+	#winner-box .name{font-size:22px;display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:12px}
+	#winner-box .swatch{width:18px;height:18px;border-radius:50%;display:inline-block}
+	#winner-box .payout{font-size:18px;color:#4dff91}
+	/* Results panel */
+	#results{position:fixed;right:0;top:50%;transform:translateY(-50%);background:rgba(6,7,12,.92);border-radius:12px 0 0 12px;padding:16px 20px;width:280px;display:none;z-index:15;max-height:80vh;overflow-y:auto}
+	#results h3{font-size:13px;text-transform:uppercase;opacity:.5;letter-spacing:.08em;margin-bottom:8px}
+	#results ol{list-style:none;padding:0}
+	#results li{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px}
+	#results .place{width:28px;font-weight:700}
+	#results .sw{width:12px;height:12px;border-radius:50%;flex-shrink:0}
+	#results .nm{flex:1}
+	#results .tm{opacity:.45;font-variant-numeric:tabular-nums;font-size:12px}
+	#results .pay{color:#4dff91;font-size:12px}
+	/* Betting panel */
+	#bet-panel{position:fixed;left:0;top:50%;transform:translateY(-50%);background:rgba(6,7,12,.92);border-radius:0 12px 12px 0;padding:16px;width:220px;z-index:15;display:none}
+	#bet-panel h3{font-size:12px;text-transform:uppercase;opacity:.5;letter-spacing:.08em;margin-bottom:10px}
+	#marble-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-bottom:12px}
+	#marble-grid .chip{width:34px;height:34px;border-radius:6px;border:2px solid transparent;cursor:pointer;transition:border-color .15s}
+	#marble-grid .chip.sel{border-color:#ffd94a}
+	#marble-grid .chip:hover{border-color:rgba(255,255,255,.5)}
+	#bet-amount{width:100%;padding:8px;background:#1a1f2e;border:1px solid #2a3040;border-radius:6px;color:#fff;font-size:14px;margin-bottom:8px}
+	#place-bet{width:100%;padding:10px;background:#2a6df4;color:#fff;border:0;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer}
+	#place-bet:hover{background:#3479ff}
+	#place-bet:disabled{background:#333;cursor:default}
+	/* History bar */
+	#history{position:fixed;bottom:8px;left:50%;transform:translateX(-50%);display:flex;gap:5px;z-index:10}
+	#history .rchip{width:36px;height:24px;border-radius:4px;font-size:9px;color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;opacity:.8}
+	#history .rchip:hover{opacity:1}
+	/* Fairness popup */
+	#fairness{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:25}
+	#fairness-box{background:#151923;border:1px solid #2a3040;border-radius:12px;padding:24px 32px;min-width:380px;max-width:480px}
+	#fairness-box h3{color:#66d9ff;font-size:16px;margin-bottom:12px}
+	#fairness-box .row{display:flex;gap:12px;padding:4px 0;font-size:12px}
+	#fairness-box .k{opacity:.5;min-width:130px}
+	#fairness-box .v{word-break:break-all;color:#ccc}
+	/* Brand */
+	#brand{position:fixed;bottom:8px;right:12px;font-size:10px;opacity:.25;z-index:5}
+</style>
+</head>
+<body>
+<div id="top-bar">
+	<div><div class="lbl">Status</div><div class="val" id="state">WAITING</div></div>
+	<div><div class="lbl">Time</div><div class="val" id="timer">00:00</div></div>
+	<div><div class="lbl">Pot</div><div class="val" id="pot">0.00 USDT</div></div>
+	<div><div class="lbl">Marbles</div><div class="val" id="count">0/20</div></div>
+</div>
+<div id="countdown"><div class="num"></div></div>
+<div id="winner-overlay"><div id="winner-box"><h2>WINNER!</h2><div class="name"><span class="swatch" id="w-sw"></span><span id="w-name"></span></div><div class="payout" id="w-pay"></div></div></div>
+<div id="results"><h3>Race Results</h3><ol id="results-list"></ol></div>
+<div id="bet-panel"><h3>Place Your Bet</h3><div id="marble-grid"></div><input id="bet-amount" type="number" value="1.00" min="0.1" step="0.1"><button id="place-bet" disabled>SELECT MARBLE</button></div>
+<div id="history"></div>
+<div id="fairness" onclick="this.style.display='none'"><div id="fairness-box"></div></div>
+<div id="brand">MARBLES v0.6 — provably fair</div>
+
+<script type="importmap">
+{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","cannon-es":"https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
+
+const MARBLE_RADIUS=0.3,MARBLE_COUNT=20,SLOT_COUNT=24,EDGE_MARGIN=0.4,PHYSICS_HZ=60,PHYSICS_DT=1/PHYSICS_HZ,HOUSE_EDGE=0.05;
+const SEGMENTS=[{length:18,yaw:0,tilt:14},{length:18,yaw:18,tilt:14},{length:18,yaw:-18,tilt:14},{length:18,yaw:-18,tilt:14},{length:18,yaw:18,tilt:14}];
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;document.body.appendChild(renderer.domElement);
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x5588bb);scene.fog=new THREE.FogExp2(0x5588bb,0.004);
+const camera=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,0.1,400);
+const sun=new THREE.DirectionalLight(0xfff5e8,2.2);sun.position.set(-15,25,10);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);sun.shadow.camera.left=-50;sun.shadow.camera.right=50;sun.shadow.camera.top=30;sun.shadow.camera.bottom=-50;scene.add(sun);scene.add(new THREE.HemisphereLight(0xcfe0ff,0x1a1f28,0.7));
+const world=new CANNON.World({gravity:new CANNON.Vec3(0,-18,0)});world.broadphase=new CANNON.SAPBroadphase(world);
+const trackMat=new CANNON.Material('track'),marbleMat=new CANNON.Material('marble');
+world.addContactMaterial(new CANNON.ContactMaterial(trackMat,marbleMat,{friction:0.35,restitution:0.3}));
+world.addContactMaterial(new CANNON.ContactMaterial(marbleMat,marbleMat,{friction:0.1,restitution:0.25}));
+
+// Build S-curve track
+const segMeta=[];
+let cursor=new THREE.Vector3();
+for(const s of SEGMENTS){
+	const yr=s.yaw*Math.PI/180,tr=-s.tilt*Math.PI/180;
+	const yb=new THREE.Matrix4().makeRotationY(yr);
+	const tb=new THREE.Matrix4().makeRotationX(tr);
+	const m4=new THREE.Matrix4().multiplyMatrices(yb,tb);
+	const basis=new THREE.Matrix3().setFromMatrix4(m4);
+	const forward=new THREE.Vector3(0,0,-1).applyMatrix3(basis);
+	const right=new THREE.Vector3(1,0,0).applyMatrix3(basis);
+	const up=new THREE.Vector3(0,1,0).applyMatrix3(basis);
+	const center=cursor.clone().add(forward.clone().multiplyScalar(s.length/2));
+	segMeta.push({center,forward:forward.clone(),right:right.clone(),up:up.clone(),length:s.length,quat:new THREE.Quaternion().setFromRotationMatrix(m4)});
+	cursor.add(forward.clone().multiplyScalar(s.length));
+}
+const deckColor=0x8c95a5,wallColor=0x5a616e,groundColor=0x383c46;
+function addTrackBox(w,h,d,pos,quat,color){
+	const body=new CANNON.Body({mass:0,material:trackMat,shape:new CANNON.Box(new CANNON.Vec3(w/2,h/2,d/2))});
+	body.position.set(pos.x,pos.y,pos.z);body.quaternion.set(quat.x,quat.y,quat.z,quat.w);world.addBody(body);
+	const mesh=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),new THREE.MeshStandardMaterial({color,roughness:0.8}));
+	mesh.position.copy(pos);mesh.quaternion.copy(quat);mesh.castShadow=false;mesh.receiveShadow=true;scene.add(mesh);
+}
+for(const m of segMeta){
+	addTrackBox(6,0.5,m.length,m.center,m.quat,deckColor);
+	const wh=3;
+	for(const side of[-1,1]){
+		const wc=m.center.clone().add(m.right.clone().multiplyScalar(3*side)).add(m.up.clone().multiplyScalar(wh/2));
+		addTrackBox(0.2,wh,m.length,wc,m.quat,wallColor);
+	}
+}
+// Ground
+const bb=new THREE.Box3();segMeta.forEach(m=>{const hl=m.length/2;for(const sx of[-1,1])for(const sz of[-1,1])bb.expandByPoint(m.center.clone().add(m.right.clone().multiplyScalar(3*sx)).add(m.forward.clone().multiplyScalar(hl*sz)))});
+const gs=Math.max(bb.max.x-bb.min.x,bb.max.z-bb.min.z)+60;
+addTrackBox(gs,0.5,gs,new THREE.Vector3((bb.min.x+bb.max.x)/2,bb.min.y-8,(bb.min.z+bb.max.z)/2),new THREE.Quaternion(),groundColor);
+
+// Finish line
+const lastSeg=segMeta[segMeta.length-1];
+const finishPos=lastSeg.center.clone().add(lastSeg.forward.clone().multiplyScalar(lastSeg.length/2+0.5)).add(lastSeg.up.clone().multiplyScalar(2));
+const finishBanner=new THREE.Mesh(new THREE.PlaneGeometry(8,3),new THREE.MeshBasicMaterial({color:0xff2626,transparent:true,opacity:0.45,side:THREE.DoubleSide,depthTest:false}));
+finishBanner.position.copy(finishPos);finishBanner.quaternion.copy(lastSeg.quat);finishBanner.rotateX(Math.PI/2);scene.add(finishBanner);
+
+// Spawn marbles
+function spawnSlotPos(slot,dropOrder){
+	const m0=segMeta[0],usable=6-2*EDGE_MARGIN;
+	const sx=-3+EDGE_MARGIN+slot*(usable/(SLOT_COUNT-1));
+	const fwOff=-(m0.length/2-4);
+	const surface=m0.center.clone().add(m0.forward.clone().multiplyScalar(fwOff)).add(m0.up.clone().multiplyScalar(0.25));
+	return surface.add(m0.right.clone().multiplyScalar(sx)).add(m0.up.clone().multiplyScalar(0.5+dropOrder*0.12));
+}
+function hsvColor(i,n){const c=new THREE.Color();c.setHSL(i/Math.max(n,1),0.7,0.55);return c}
+function deriveSlots(seedHex,roundId,count){
+	const taken=new Set(),slots=[];
+	for(let i=0;i<count;i++){let h=2166136261;const s=seedHex+':'+roundId+':'+i;for(let k=0;k<s.length;k++){h^=s.charCodeAt(k);h=Math.imul(h,16777619)}let slot=(h>>>0)%SLOT_COUNT;while(taken.has(slot))slot=(slot+1)%SLOT_COUNT;taken.add(slot);slots.push(slot)}return slots}
+
+const sGeo=new THREE.SphereGeometry(MARBLE_RADIUS,20,16);
+const marbles=[];
+async function sha256(s){const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));return[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')}
+
+let tick=0,raceStart=0,raceEnd=-1,started=false,accum=0,prev=performance.now();
+const placements=[];
+let selectedMarble=-1;
+
+async function boot(){
+	const seed=crypto.getRandomValues(new Uint8Array(32));
+	const seedHex=[...seed].map(b=>b.toString(16).padStart(2,'0')).join('');
+	const seedHash=await sha256(seedHex);
+	const roundId=Date.now();
+	const slots=deriveSlots(seedHex,roundId,MARBLE_COUNT);
+	document.getElementById('count').textContent=MARBLE_COUNT+'/20';
+	document.getElementById('pot').textContent=(MARBLE_COUNT*1).toFixed(2)+' USDT';
+
+	// Build betting grid
+	const grid=document.getElementById('marble-grid');
+	for(let i=0;i<MARBLE_COUNT;i++){
+		const pos=spawnSlotPos(slots[i],i);
+		const color=hsvColor(i,MARBLE_COUNT);
+		const body=new CANNON.Body({mass:1,material:marbleMat,shape:new CANNON.Sphere(MARBLE_RADIUS)});
+		body.position.set(pos.x,pos.y,pos.z);body.linearDamping=0.01;body.angularDamping=0.05;world.addBody(body);
+		const mesh=new THREE.Mesh(sGeo,new THREE.MeshStandardMaterial({color,roughness:0.25,metalness:0.3}));
+		mesh.castShadow=true;scene.add(mesh);
+		marbles.push({body,mesh,name:`Marble_${String(i).padStart(2,'0')}`,color,finishedTick:-1,frozen:true});
+		const chip=document.createElement('div');chip.className='chip';chip.style.background='#'+color.getHexString();
+		chip.title='Marble #'+i;chip.onclick=()=>{selectedMarble=i;grid.querySelectorAll('.chip').forEach(c=>c.classList.remove('sel'));chip.classList.add('sel');document.getElementById('place-bet').disabled=false;document.getElementById('place-bet').textContent='BET ON #'+i};
+		grid.appendChild(chip);
+	}
+	document.getElementById('bet-panel').style.display='block';
+	document.getElementById('place-bet').onclick=()=>{document.getElementById('place-bet').textContent='BET PLACED';document.getElementById('place-bet').disabled=true};
+
+	// Countdown
+	document.getElementById('state').textContent='COUNTDOWN';
+	const cdEl=document.getElementById('countdown');cdEl.style.display='flex';
+	for(const t of['3','2','1','GO!']){
+		cdEl.querySelector('.num').textContent=t;cdEl.querySelector('.num').style.color=t==='GO!'?'#4dff91':t==='1'?'#ff6655':'#ffd94a';
+		cdEl.querySelector('.num').style.transform='scale(2)';cdEl.querySelector('.num').style.opacity='1';
+		await new Promise(r=>setTimeout(r,100));cdEl.querySelector('.num').style.transform='scale(1)';
+		await new Promise(r=>setTimeout(r,700));cdEl.querySelector('.num').style.opacity='0';await new Promise(r=>setTimeout(r,200));
+	}
+	cdEl.style.display='none';
+
+	marbles.forEach(m=>m.frozen=false);
+	started=true;raceStart=performance.now();
+	document.getElementById('state').textContent='RACING';document.getElementById('state').style.color='#ff6655';
+	document.getElementById('bet-panel').querySelector('h3').textContent='BETS LOCKED';
+	// Camera to follow
+	camMode='follow';
+
+	// Store fairness data
+	window._fairness={roundId,seedHash:seedHash.slice(0,32)+'...',serverSeed:seedHex.slice(0,32)+'...',marbles:MARBLE_COUNT};
+}
+
+// Camera
+let camMode='overview';
+const camSmooth=3.5;
+function marbleProgress(m){
+	let best=0,bd=Infinity,cum=0;
+	for(const seg of segMeta){
+		const lf=seg.forward.dot(new THREE.Vector3().subVectors(new THREE.Vector3(m.body.position.x,m.body.position.y,m.body.position.z),seg.center));
+		const cl=Math.max(-seg.length/2,Math.min(seg.length/2,lf));
+		const proj=seg.center.clone().add(seg.forward.clone().multiplyScalar(cl));
+		const d=proj.distanceTo(new THREE.Vector3(m.body.position.x,m.body.position.y,m.body.position.z));
+		if(d<bd){bd=d;best=cum+cl+seg.length/2}cum+=seg.length;
+	}return best;
+}
+function findLeader(){let b=marbles[0],bp=marbleProgress(b);for(let i=1;i<marbles.length;i++){const p=marbleProgress(marbles[i]);if(p>bp){b=marbles[i];bp=p}}return b}
+
+function updateCamera(dt){
+	if(camMode==='overview'){
+		const c=bb.getCenter(new THREE.Vector3());const ext=Math.max(bb.max.x-bb.min.x,bb.max.z-bb.min.z)*0.6;
+		const d=c.clone().add(new THREE.Vector3(ext*.5,ext*.7,ext*.8));camera.position.lerp(d,camSmooth*dt);camera.lookAt(c);
+	}else if(camMode==='follow'){
+		const l=findLeader();const lp=new THREE.Vector3(l.body.position.x,l.body.position.y,l.body.position.z);
+		const ls=segMeta[segMeta.length-1];const off=ls.forward.clone().multiplyScalar(-12).add(new THREE.Vector3(0,7,0));
+		camera.position.lerp(lp.clone().add(off),camSmooth*dt);camera.lookAt(lp);
+	}else if(camMode==='winner'&&winnerBody){
+		const wp=new THREE.Vector3(winnerBody.body.position.x,winnerBody.body.position.y+3,winnerBody.body.position.z);
+		const a=performance.now()/1000*0.4;camera.position.lerp(wp.clone().add(new THREE.Vector3(Math.cos(a)*5,3,Math.sin(a)*5)),camSmooth*2*dt);camera.lookAt(wp);
+	}
+}
+
+let winnerBody=null;
+function checkFinish(){
+	for(const m of marbles){
+		if(m.finishedTick>=0||m.frozen)continue;
+		const mp=new THREE.Vector3(m.body.position.x,m.body.position.y,m.body.position.z);
+		if(mp.distanceTo(finishPos)<8&&lastSeg.forward.dot(new THREE.Vector3().subVectors(mp,lastSeg.center))>lastSeg.length/2){
+			m.finishedTick=tick;placements.push(m);
+			if(placements.length===1){winnerBody=m;showWinner(m)}
+		}
+	}
+	if(started&&raceEnd<0&&(placements.length===marbles.length||tick>=120*PHYSICS_HZ)){raceEnd=tick;showResults()}
+}
+
+function showWinner(m){
+	document.getElementById('state').textContent='WINNER!';document.getElementById('state').style.color='#ffd94a';
+	const pot=MARBLE_COUNT*1;const prize=(pot*(1-HOUSE_EDGE)).toFixed(2);
+	document.getElementById('w-sw').style.background='#'+m.color.getHexString();
+	document.getElementById('w-name').textContent=m.name;document.getElementById('w-pay').textContent='Won '+prize+' USDT';
+	document.getElementById('winner-overlay').style.display='flex';
+	setTimeout(()=>document.getElementById('winner-box').classList.add('show'),50);
+	camMode='winner';
+	// Add to history
+	const hbar=document.getElementById('history');
+	const chip=document.createElement('div');chip.className='rchip';chip.style.background='#'+m.color.getHexString();
+	chip.textContent='#1';chip.onclick=()=>{showFairness()};hbar.appendChild(chip);
+}
+
+function showResults(){
+	const ol=document.getElementById('results-list');ol.innerHTML='';
+	const pot=MARBLE_COUNT*1;const prize=pot*(1-HOUSE_EDGE);
+	for(let i=0;i<placements.length;i++){
+		const m=placements[i];const li=document.createElement('li');
+		const placeColor=i===0?'#ffd94a':i===1?'#bbb':i===2?'#a07040':'#666';
+		li.innerHTML=`<span class="place" style="color:${placeColor}">#${i+1}</span><span class="sw" style="background:#${m.color.getHexString()}"></span><span class="nm">${m.name}</span><span class="tm">${(m.finishedTick/PHYSICS_HZ).toFixed(2)}s</span>${i===0?`<span class="pay">+${prize.toFixed(2)}</span>`:''}`;
+		ol.appendChild(li);
+	}
+	document.getElementById('results').style.display='block';
+}
+
+function showFairness(){
+	const d=window._fairness||{};
+	const box=document.getElementById('fairness-box');
+	box.innerHTML=`<h3>PROVABLY FAIR</h3><div class="row"><span class="k">Round ID:</span><span class="v">${d.roundId||'?'}</span></div><div class="row"><span class="k">Seed Hash:</span><span class="v">${d.seedHash||'?'}</span></div><div class="row"><span class="k">Server Seed:</span><span class="v">${d.serverSeed||'?'}</span></div><div class="row"><span class="k">Marbles:</span><span class="v">${d.marbles||'?'}</span></div><div class="row"><span class="k">Verify:</span><span class="v" style="color:#4dff91">SHA-256(seed) == hash VERIFIED</span></div>`;
+	document.getElementById('fairness').style.display='flex';
+}
+
+function animate(now){
+	const dt=Math.min(0.05,(now-prev)/1000);prev=now;accum+=dt;
+	while(accum>=PHYSICS_DT){
+		if(started&&raceEnd<0){
+			for(const m of marbles){if(m.frozen){m.body.velocity.set(0,0,0);m.body.angularVelocity.set(0,0,0)}}
+			world.step(PHYSICS_DT);checkFinish();tick++;
+		}accum-=PHYSICS_DT;
+	}
+	for(const m of marbles){m.mesh.position.copy(m.body.position);m.mesh.quaternion.copy(m.body.quaternion)}
+	if(started){
+		const elapsed=raceEnd<0?(now-raceStart)/1000:raceEnd/PHYSICS_HZ;
+		const m=Math.floor(elapsed)/60|0,s=Math.floor(elapsed)%60;
+		document.getElementById('timer').textContent=String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
+		const l=findLeader();document.getElementById('top-bar').querySelector('.lbl').textContent=l?l.name:'—';
+	}
+	updateCamera(dt);renderer.render(scene,camera);requestAnimationFrame(animate);
+}
+
+window.addEventListener('resize',()=>{renderer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix()});
+boot();requestAnimationFrame(animate);
+</script>
+</body>
+</html>
