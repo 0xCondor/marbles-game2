@@ -1,12 +1,7 @@
 extends Node3D
 
-# Live-playback scene. Polls the replayd /live endpoint for active rounds,
-# subscribes to the newest one over WebSocket, and renders frame-by-frame as
-# TICK messages arrive. Archive sibling: web_main.gd.
-#
-# CLI override: `++ --api-base=http://host:port` lets desktop builds point at
-# a remote replayd. On Web we read window.location.origin the same way
-# web_main does.
+# Live casino client: subscribes to active round via WebSocket,
+# renders frame-by-frame with full casino UI.
 
 const DESKTOP_DEFAULT_API_BASE := "http://127.0.0.1:8087"
 const LIVE_POLL_INTERVAL_SEC := 0.5
@@ -27,9 +22,58 @@ var _player: PlaybackPlayer
 var _client: LiveStreamClient
 var _poll_deadline_ms: int = 0
 
+var _hud: GameHUD
+var _winner_overlay: WinnerOverlay
+var _results_panel: RaceResultsPanel
+var _history: RoundHistory
+var _fairness_popup: FairnessPopup
+var _betting_panel: BettingPanel
+var _loading: LoadingScreen
+var _countdown: CountdownDisplay
+var _confetti: Confetti
+var _camera: CinematicCamera
+var _audio: AudioManager
+var _track: Track
+var _header_data: Dictionary
+var _race_timer := 0.0
+var _racing := false
+
 func _ready() -> void:
 	_build_environment()
-	# Track is instantiated in _on_header once we know track_id from the stream.
+
+	_audio = AudioManager.new()
+	add_child(_audio)
+
+	_loading = LoadingScreen.new()
+	add_child(_loading)
+	_loading.set_progress(0.1, "Looking for live race...")
+
+	_hud = GameHUD.new()
+	add_child(_hud)
+	_hud.update_state("CONNECTING")
+
+	_results_panel = RaceResultsPanel.new()
+	add_child(_results_panel)
+
+	_winner_overlay = WinnerOverlay.new()
+	add_child(_winner_overlay)
+
+	_history = RoundHistory.new()
+	add_child(_history)
+
+	_fairness_popup = FairnessPopup.new()
+	add_child(_fairness_popup)
+	_history.round_clicked.connect(func(data: Dictionary): _fairness_popup.show_popup(data))
+
+	_betting_panel = BettingPanel.new()
+	add_child(_betting_panel)
+	_betting_panel.bet_placed.connect(_on_bet_placed)
+
+	_countdown = CountdownDisplay.new()
+	add_child(_countdown)
+
+	_confetti = Confetti.new()
+	add_child(_confetti)
 
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--api-base="):
@@ -44,43 +88,42 @@ func _ready() -> void:
 	_player.playback_finished.connect(_on_playback_finished)
 
 	_poll_deadline_ms = Time.get_ticks_msec() + int(LIVE_POLL_TIMEOUT_SEC * 1000.0)
-	print("LIVE_CLIENT: polling %s/live for active rounds" % _api_base)
 	_request_live_list()
+
+func _process(delta: float) -> void:
+	if _racing:
+		_race_timer += delta
+		_hud.update_timer(_race_timer)
 
 func _request_live_list() -> void:
 	var err := _list_req.request(_api_base + "/live")
 	if err != OK:
-		push_error("live list request failed to start: %d" % err)
-		get_tree().quit(1)
+		push_error("live list request failed: %d" % err)
 
 func _on_list_response(result: int, code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	if result != HTTPRequest.RESULT_SUCCESS or code != 200:
 		push_error("live list fetch failed: result=%d code=%d" % [result, code])
-		get_tree().quit(1)
 		return
 	var parsed = JSON.parse_string(body.get_string_from_utf8())
 	if typeof(parsed) != TYPE_DICTIONARY or not parsed.has("round_ids"):
-		push_error("live list response malformed: %s" % body.get_string_from_utf8())
-		get_tree().quit(1)
 		return
 	var ids: Array = parsed["round_ids"]
 	if ids.is_empty():
 		if Time.get_ticks_msec() > _poll_deadline_ms:
 			push_error("no active rounds after %d s" % int(LIVE_POLL_TIMEOUT_SEC))
-			get_tree().quit(1)
+			_hud.update_state("NO RACE")
+			_loading.set_progress(1.0, "Waiting for next race...")
+			_loading.fade_out(1.0)
 			return
-		# Retry after a short delay; HTTPRequest is single-shot so we reuse it.
+		_loading.set_progress(0.2, "Waiting for race...")
 		await get_tree().create_timer(LIVE_POLL_INTERVAL_SEC).timeout
 		_request_live_list()
 		return
-	# Round IDs are unix-nanos as strings (JSON-number precision-safe). "Newest"
-	# = numerically largest. Compare as ints; 19-digit unix-nanos fit in
-	# Godot's int (int64).
 	var newest := String(ids[0])
 	for id in ids:
 		if int(id) > int(newest):
 			newest = String(id)
-	print("LIVE_CLIENT: %d active, subscribing to newest=%s" % [ids.size(), newest])
+	_loading.set_progress(0.5, "Joining race...")
 	_subscribe(newest)
 
 func _subscribe(round_id: String) -> void:
@@ -98,66 +141,136 @@ func _subscribe(round_id: String) -> void:
 	_client.done_received.connect(_on_done)
 	_client.connection_failed.connect(_on_ws_failed)
 	_client.closed.connect(_on_ws_closed)
-	print("LIVE_CLIENT: opening %s" % url)
 	var err := _client.connect_to_url(url)
 	if err != OK:
 		push_error("ws connect failed: %d" % err)
-		get_tree().quit(1)
 
 func _on_header(header: Dictionary) -> void:
+	_header_data = header
 	var marbles: int = (header["header"] as Array).size()
 	var track_id := int(header.get("track_id", TrackRegistry.RAMP))
-	var track := TrackRegistry.instance(track_id)
-	add_child(track)
-	var cam := FixedCamera.new()
-	cam.track = track
-	add_child(cam)
-	print("LIVE_CLIENT: HEADER round=%d marbles=%d tick_rate=%d track=%s" % [int(header["round_id"]), marbles, int(header["tick_rate_hz"]), TrackRegistry.name_of(track_id)])
+	_track = TrackRegistry.instance(track_id)
+	add_child(_track)
+
+	_camera = CinematicCamera.new()
+	_camera.track = _track
+	add_child(_camera)
+	_camera.set_mode(CinematicCamera.Mode.OVERVIEW)
+
+	_hud.update_state("LIVE")
+	_hud.update_marble_count(marbles, 20)
+	_hud.update_pot(float(marbles) * 1.0)
+
+	# Show betting panel with marble colors
+	var marble_colors: Array = []
+	for m in header["header"]:
+		var rgba: int = m.get("rgba", 0)
+		if rgba != 0:
+			marble_colors.append(Color(((rgba >> 24) & 0xFF) / 255.0, ((rgba >> 16) & 0xFF) / 255.0, ((rgba >> 8) & 0xFF) / 255.0, 1.0))
+		else:
+			marble_colors.append(Color.WHITE)
+	_betting_panel.show_panel(marble_colors)
+
+	_loading.set_progress(1.0, "Race starting!")
+	_loading.fade_out(0.3)
+
 	_player.begin_stream(header)
+
+	# Short countdown then switch to follow
+	_audio.play_sfx("countdown_tick")
+	_countdown.countdown_finished.connect(func():
+		_racing = true
+		_camera.set_mode(CinematicCamera.Mode.FOLLOW)
+		_betting_panel.lock_bets()
+		_hud.update_state("RACING")
+		_audio.play_sfx("race_start")
+	)
+	_countdown.start_countdown(3)
 
 var _tick_count: int = 0
 
-func _on_tick(_frame: Dictionary) -> void:
-	_player.append_frame(_frame)
+func _on_tick(frame: Dictionary) -> void:
+	_player.append_frame(frame)
 	_tick_count += 1
-	# Log sparingly — ticks arrive at 60Hz and the full buffer dump would spam
-	# the CI log, but a heartbeat lets a human see the stream is flowing.
-	if _tick_count == 1 or _tick_count % 60 == 0:
-		print("LIVE_CLIENT: TICK count=%d latest=%d" % [_tick_count, int(_frame["tick"])])
 
 func _on_done() -> void:
-	print("LIVE_CLIENT: DONE after %d ticks" % _tick_count)
+	_racing = false
 	_player.end_stream()
+
+func _on_bet_placed(marble_index: int, amount: float) -> void:
+	print("BET: marble #%d for %.2f" % [marble_index, amount])
+	_audio.play_sfx("bet_placed")
 
 func _on_ws_failed(reason: String) -> void:
 	push_error("live ws failed: %s" % reason)
-	get_tree().quit(1)
+	_hud.update_state("DISCONNECTED")
 
 func _on_ws_closed() -> void:
-	# Expected after DONE. If DONE was lost (e.g. server closed before the
-	# client drained its receive buffer), treat close-after-header as implicit
-	# end-of-stream so playback still terminates cleanly. No-op if end_stream
-	# was already called from _on_done.
-	print("LIVE_CLIENT: socket closed (ticks=%d)" % _tick_count)
 	_player.end_stream()
 
-func _on_playback_finished(last_tick: int, first_marble_pos: Vector3) -> void:
-	print("LIVE_CLIENT: playback done tick=%d first_marble_pos=%s" % [last_tick, first_marble_pos])
-	await get_tree().create_timer(3.0).timeout
-	get_tree().quit(0)
+func _on_playback_finished(last_tick: int, _first_marble_pos: Vector3) -> void:
+	_racing = false
+	_hud.update_state("FINISHED")
+	_audio.play_sfx("winner_fanfare")
+
+	if not _header_data.is_empty():
+		var header: Array = _header_data["header"]
+		if not header.is_empty():
+			var winner_name: String = header[0]["name"]
+			var rgba: int = header[0].get("rgba", 0)
+			var winner_color := Color(((rgba >> 24) & 0xFF) / 255.0, ((rgba >> 16) & 0xFF) / 255.0, ((rgba >> 8) & 0xFF) / 255.0, 1.0) if rgba != 0 else Color.WHITE
+			var pot := float(header.size()) * 1.0
+			var prize := pot * 0.95
+
+			_confetti.shower(_first_marble_pos + Vector3(0, 2, 0))
+			_camera.set_mode(CinematicCamera.Mode.WINNER)
+			_winner_overlay.show_winner(winner_name, winner_color, "Won %.2f USDT" % prize)
+
+			var result_data: Array = []
+			for i in range(header.size()):
+				var r: int = header[i].get("rgba", 0)
+				var c := Color(((r >> 24) & 0xFF) / 255.0, ((r >> 16) & 0xFF) / 255.0, ((r >> 8) & 0xFF) / 255.0, 1.0) if r != 0 else Color.WHITE
+				result_data.append({"name": header[i]["name"], "color": c, "time": float(last_tick) / 60.0 if i == 0 else 0.0, "payout": prize if i == 0 else 0.0})
+
+			await get_tree().create_timer(2.0).timeout
+			_results_panel.show_results(result_data)
+			_betting_panel.hide_panel()
+
+			_history.add_round({
+				"round_number": _header_data.get("round_id", 0),
+				"winner_name": winner_name,
+				"winner_color": winner_color,
+				"seed_hash": FairSeed.to_hex(_header_data.get("server_seed_hash", PackedByteArray())),
+				"round_id": _header_data.get("round_id", 0),
+				"marble_count": header.size(),
+				"verified": false,
+			})
 
 func _build_environment() -> void:
 	var light := DirectionalLight3D.new()
 	light.rotation_degrees = Vector3(-50, -30, 0)
 	light.shadow_enabled = true
+	light.light_energy = 1.8
+	light.light_color = Color(1.0, 0.97, 0.92)
 	add_child(light)
 
 	var env := WorldEnvironment.new()
 	var e := Environment.new()
 	e.background_mode = Environment.BG_SKY
+	var sky_mat := ProceduralSkyMaterial.new()
+	sky_mat.sky_top_color = Color(0.35, 0.55, 0.82)
+	sky_mat.sky_horizon_color = Color(0.65, 0.75, 0.88)
+	sky_mat.ground_bottom_color = Color(0.18, 0.2, 0.25)
+	sky_mat.ground_horizon_color = Color(0.55, 0.6, 0.68)
 	var sky := Sky.new()
-	sky.sky_material = ProceduralSkyMaterial.new()
+	sky.sky_material = sky_mat
 	e.sky = sky
 	e.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	e.ambient_light_energy = 0.6
+	e.tonemap_mode = Environment.TONE_MAP_ACES
+	e.fog_enabled = true
+	e.fog_light_color = Color(0.7, 0.75, 0.85)
+	e.fog_density = 0.003
+	e.ssao_enabled = true
 	env.environment = e
 	add_child(env)
