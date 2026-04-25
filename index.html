@@ -92,7 +92,7 @@ import*as C from'cannon-es';
 const PI=Math.PI,W=window,D=document;
 const NAMES=['Ruby','Ember','Solar','Jade','Aqua','Cobalt','Violet','Orchid','Blush','Onyx','Pearl','Lime'];
 const COLS=[0xff2244,0xff6622,0xffaa00,0x22cc66,0x22dddd,0x3366ff,0x8833ff,0xff44cc,0xff6699,0x222233,0xeeeeff,0x88ff22];
-const RL=60,RW=6,TILT_DEG=20,MR=0.3,MN=12;
+const RL=120,RW=6,TILT_DEG=10,MR=0.3,MN=12;
 let scene,cam,renderer,world,marbles=[],bodies=[],lights=[];
 let finished=[],raceOn=false,t0=0,done=false;
 let playerBal=1000,playerBet=-1,playerAmt=0,betLocked=false;
@@ -145,10 +145,10 @@ function init(){
   const gm=new T.Mesh(new T.PlaneGeometry(200,200),new T.MeshStandardMaterial({color:0x0a0c14,metalness:.7,roughness:.2}));
   gm.rotation.x=-PI/2;gm.position.y=-15;gm.receiveShadow=true;scene.add(gm);
   // physics
-  world=new C.World({gravity:new C.Vec3(0,-30,0)});
+  world=new C.World({gravity:new C.Vec3(0,-15,0)});
   world.broadphase=new C.SAPBroadphase(world);
-  world.defaultContactMaterial.friction=0.3;
-  world.defaultContactMaterial.restitution=0.3;
+  world.defaultContactMaterial.friction=0.4;
+  world.defaultContactMaterial.restitution=0.35;
   const gp=new C.Body({mass:0,shape:new C.Plane()});
   gp.quaternion.setFromEuler(-PI/2,0,0);gp.position.y=-15;world.addBody(gp);
   // RAMP: simple tilted box — same rotation for Three.js and Cannon-es
@@ -162,6 +162,37 @@ function init(){
   nL.position.set(-RW/2-0.15,1.28,0);nL.rotation.x=tiltRad;scene.add(nL);
   const nR=new T.Mesh(new T.BoxGeometry(0.15,0.06,RL),new T.MeshStandardMaterial({color:0xff00cc,emissive:0xff00cc,emissiveIntensity:4}));
   nR.position.set(RW/2+0.15,1.28,0);nR.rotation.x=tiltRad;scene.add(nR);
+  // bumpers — cylindrical pegs along the track for chaos and overtakes
+  const bumperMat=new T.MeshStandardMaterial({color:0x66d9ff,emissive:0x00aaff,emissiveIntensity:2,metalness:0.8,roughness:0.2});
+  const bumperGeo=new T.CylinderGeometry(0.25,0.25,1.2,12);
+  const tiltCos=Math.cos(Math.abs(tiltRad)),tiltSin=Math.sin(Math.abs(tiltRad));
+  const bumperPositions=[
+    // row 1
+    {x:-1.5,z:15},{x:0.5,z:15},{x:2.0,z:15},
+    // row 2
+    {x:-2.0,z:6},{x:-0.3,z:6},{x:1.2,z:6},{x:2.5,z:6},
+    // row 3
+    {x:-1.0,z:-3},{x:1.0,z:-3},{x:2.2,z:-3},
+    // row 4
+    {x:-2.2,z:-12},{x:-0.5,z:-12},{x:1.5,z:-12},
+    // row 5
+    {x:-1.8,z:-21},{x:0,z:-21},{x:1.8,z:-21},
+    // row 6
+    {x:-1.0,z:-30},{x:0.8,z:-30},{x:2.5,z:-30},
+    // row 7
+    {x:-2.5,z:-39},{x:-0.3,z:-39},{x:1.2,z:-39},
+    // row 8
+    {x:-1.5,z:-48},{x:0.5,z:-48},{x:2.0,z:-48},
+  ];
+  for(const bp of bumperPositions){
+    const bpy=bp.z*(-tiltSin)+0.6;
+    const bpz=bp.z*tiltCos;
+    const bm=new T.Mesh(bumperGeo,bumperMat);
+    bm.position.set(bp.x,bpy,bpz);bm.castShadow=true;scene.add(bm);
+    const bb=new C.Body({mass:0,shape:new C.Cylinder(0.25,0.25,1.2,8)});
+    bb.position.set(bp.x,bpy,bpz);
+    world.addBody(bb);
+  }
   // finish line at downhill end
   finishZ=-RL/2*Math.cos(tiltRad);
   const finY=-RL/2*Math.sin(Math.abs(tiltRad));
@@ -178,7 +209,7 @@ function init(){
     m.castShadow=true;scene.add(m);
     const pl=new T.PointLight(c,0.5,3);m.add(pl);lights.push(pl);
     marbles.push(m);
-    const b=new C.Body({mass:1,shape:new C.Sphere(MR),linearDamping:0.01,angularDamping:0.05});
+    const b=new C.Body({mass:1,shape:new C.Sphere(MR),linearDamping:0.05,angularDamping:0.1});
     const row=Math.floor(i/4),col=i%4;
     b.position.set(-1.2+col*0.8, spawnY+row*0.7, spawnZ-row*0.5);
     b.type=C.Body.STATIC;
