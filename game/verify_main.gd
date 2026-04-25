@@ -45,15 +45,38 @@ func _verify(replay: Dictionary) -> bool:
 			return false
 	print("  slots OK: %d marbles across %d slots" % [header.size(), slot_count])
 
+	# 2b. Re-derive marble colors and compare. A tampered color (e.g. server swapping
+	# which marble is "the winner's color") would slip past the slot check.
+	var derived_colors := FairSeed.derive_marble_colors(server_seed, round_id, client_seeds)
+	for i in range(header.size()):
+		var want_rgba := FairSeed.color_to_rgba32(derived_colors[i])
+		var got_rgba := int(header[i]["rgba"])
+		if want_rgba != got_rgba:
+			push_error("color mismatch at marble %d: recorded=0x%08x derived=0x%08x" % [i, got_rgba, want_rgba])
+			return false
+	print("  colors OK: %d marbles" % header.size())
+
 	# 3. Check recorded first-frame positions match what SpawnRail would produce.
 	# Physics hasn't ticked on frame 0 yet, so the state equals the spawn state.
+	# Build the Track subclass named by the replay's track_id (v3 format)
+	# without adding it to the tree — segment meta is computed lazily on first
+	# access, so no physics bodies are spawned. Track is a Node3D, not
+	# RefCounted, so we must .free() it manually or Godot reports a leak.
+	var track_id := int(replay.get("track_id", TrackRegistry.RAMP))
+	var track := TrackRegistry.instance(track_id)
+	print("  track: %s (id=%d)" % [TrackRegistry.name_of(track_id), track_id])
+	var ok := _verify_positions(SpawnRail.new(track), header, replay)
+	track.free()
+	return ok
+
+func _verify_positions(rail: SpawnRail, header: Array, replay: Dictionary) -> bool:
 	var frames: Array = replay["frames"]
 	if frames.is_empty():
 		push_error("replay has no frames")
 		return false
 	var first_states: Array = frames[0]["states"]
 	for i in range(header.size()):
-		var expected := SpawnRail.slot_position(int(header[i]["slot"]), i)
+		var expected := rail.slot_position(int(header[i]["slot"]), i)
 		var actual: Vector3 = first_states[i]["pos"]
 		if not expected.is_equal_approx(actual):
 			push_error("spawn-position mismatch at marble %d: expected=%s got=%s" % [i, expected, actual])
