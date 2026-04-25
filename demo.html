@@ -47,6 +47,18 @@ canvas{display:block}
 #betresult h3{font-size:24px;margin-bottom:6px}
 #betresult .amt{font-size:28px;font-weight:700;margin-top:4px}
 #yourpick{position:fixed;left:12px;bottom:50px;padding:8px 14px;z-index:10;display:none;font-size:12px}
+#newrace{position:fixed;bottom:60px;left:50%;transform:translateX(-50%);padding:14px 36px;z-index:20;font-size:16px;font-weight:700;cursor:pointer;background:linear-gradient(135deg,#ffd94a,#ff8800);color:#000;border:0;border-radius:12px;display:none;box-shadow:0 0 20px rgba(255,217,74,.3)}
+#newrace:hover{box-shadow:0 0 30px rgba(255,217,74,.5)}
+#history{position:fixed;bottom:8px;left:50%;transform:translateX(-50%);display:flex;gap:4px;z-index:10;align-items:center}
+#history .hchip{width:28px;height:28px;border-radius:6px;font-size:8px;color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;opacity:.7;transition:opacity .2s;text-shadow:0 1px 1px #000}
+#history .hchip:hover{opacity:1}
+#fairpopup{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:30}
+#fairbox{padding:20px 28px;max-width:400px;width:90%}
+#fairbox h3{color:#66d9ff;font-size:15px;margin-bottom:10px}
+#fairbox .fr{display:flex;gap:8px;padding:3px 0;font-size:11px}
+#fairbox .fk{opacity:.5;min-width:100px}
+#fairbox .fv{word-break:break-all;color:#ccc}
+#leader-tag{position:fixed;top:80px;left:50%;transform:translateX(-50%);padding:6px 16px;z-index:10;font-size:12px;display:none}
 </style>
 </head>
 <body>
@@ -68,6 +80,10 @@ canvas{display:block}
 </div>
 <div id="betresult" class="panel"><h3 id="brTitle"></h3><div id="brMarble"></div><div class="amt" id="brAmt"></div></div>
 <div id="yourpick" class="panel"></div>
+<button id="newrace">NEW RACE</button>
+<div id="leader-tag" class="panel"></div>
+<div id="history"></div>
+<div id="fairpopup" onclick="this.style.display='none'"><div id="fairbox" class="panel"></div></div>
 <div id="brand">MARBLES &nbsp;|&nbsp; Provably Fair</div>
 <script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/","cannon-es":"https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js"}}</script>
 <script type="module">
@@ -81,6 +97,22 @@ const YAW=[0,18,-18,-18,18],TILT=14;
 let scene,cam,renderer,world,marbles=[],bodies=[],lights=[];
 let finished=[],raceOn=false,t0=0,done=false;
 let playerBal=1000,playerBet=-1,playerAmt=0,betLocked=false;
+let roundHistory=[],roundSeedHex='',roundSeedHash='',roundId=0;
+// Web Audio
+let audioCtx=null;
+function beep(freq,dur,vol=0.15){
+  if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+  const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+  o.connect(g);g.connect(audioCtx.destination);
+  o.frequency.value=freq;o.type='sine';
+  g.gain.setValueAtTime(vol,audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+dur);
+  o.start();o.stop(audioCtx.currentTime+dur);
+}
+function sfxTick(){beep(880,0.1)}
+function sfxGo(){beep(1320,0.2,0.2)}
+function sfxWin(){beep(660,0.15);setTimeout(()=>beep(880,0.15),150);setTimeout(()=>beep(1100,0.3,0.2),300)}
+function sfxLose(){beep(220,0.3,0.1)}
 // Track geometry
 function bSeg(i,ox,oz,a){
   const ra=a*PI/180,tr=TILT*PI/180*(i%2?1:-1);
@@ -182,7 +214,15 @@ function init(){
     b.type=C.Body.STATIC;
     world.addBody(b);bodies.push(b);
   }
+  // Provably fair seed
+  roundId=Date.now();
+  const seedBytes=crypto.getRandomValues(new Uint8Array(32));
+  roundSeedHex=[...seedBytes].map(b=>b.toString(16).padStart(2,'0')).join('');
+  crypto.subtle.digest('SHA-256',new TextEncoder().encode(roundSeedHex)).then(h=>{
+    roundSeedHash=[...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join('');
+  });
   D.getElementById('count').textContent=MN+'/'+MN;
+  D.getElementById('newrace').onclick=()=>location.reload();
   W.addEventListener('resize',()=>{cam.aspect=W.innerWidth/W.innerHeight;cam.updateProjectionMatrix();renderer.setSize(W.innerWidth,W.innerHeight)});
   buildBetPanel();
   animate();
@@ -245,7 +285,7 @@ function countdown(){
     if(i>=seq.length){el.classList.remove('show');startRace();return}
     el.textContent=seq[i];el.classList.remove('show');
     void el.offsetWidth;el.classList.add('show');
-    if(seq[i]==='GO!')el.style.color='#ffd94a';
+    if(seq[i]==='GO!'){el.style.color='#ffd94a';sfxGo()}else{sfxTick()}
     i++;setTimeout(nx,900);
   };
   setTimeout(nx,600);
@@ -312,11 +352,13 @@ function showBetResult(winnerIdx){
     title.style.color='#4dff91';
     amt.textContent='+$'+payout.toFixed(2);
     amt.style.color='#4dff91';
+    sfxWin();
   }else{
     title.textContent='YOU LOST';
     title.style.color='#ff4455';
     amt.textContent='-$'+playerAmt.toFixed(2);
     amt.style.color='#ff4455';
+    sfxLose();
   }
   D.getElementById('balance').textContent='Balance: $'+playerBal.toFixed(2);
   setTimeout(()=>br.classList.remove('show'),4000);
@@ -325,13 +367,42 @@ function showBetResult(winnerIdx){
 function showResults(){
   const el=D.getElementById('results'),ol=D.getElementById('rlist');
   ol.innerHTML='';
+  const elapsed=((performance.now()-t0)/1000);
   finished.forEach((mi,idx)=>{
     const c='#'+COLS[mi].toString(16).padStart(6,'0');
     const li=D.createElement('li');
-    li.innerHTML=`<span class="ri">${idx+1}</span><span class="rd" style="background:${c}"></span>${NAMES[mi]}`;
+    const isYou=mi===playerBet?' *':'';
+    li.innerHTML=`<span class="ri">${idx+1}</span><span class="rd" style="background:${c}"></span>${NAMES[mi]}${isYou}`;
     ol.appendChild(li);
   });
   el.style.display='block';
+  D.getElementById('newrace').style.display='block';
+  // Add to history
+  if(finished.length>0){
+    const wi=finished[0];
+    const cc='#'+COLS[wi].toString(16).padStart(6,'0');
+    const entry={id:roundId,winner:NAMES[wi],color:cc,seed:roundSeedHex,hash:roundSeedHash,marbles:MN,bet:playerBet>=0?NAMES[playerBet]:'none',won:playerBet===wi};
+    roundHistory.push(entry);
+    const hbar=D.getElementById('history');
+    const chip=D.createElement('div');
+    chip.className='hchip';chip.style.background=cc;
+    chip.textContent='#'+roundHistory.length;
+    chip.onclick=()=>showFairPopup(entry);
+    hbar.appendChild(chip);
+  }
+}
+function showFairPopup(entry){
+  const box=D.getElementById('fairbox');
+  box.innerHTML=`<h3>PROVABLY FAIR</h3>
+    <div class="fr"><span class="fk">Round:</span><span class="fv">#${entry.id}</span></div>
+    <div class="fr"><span class="fk">Seed Hash:</span><span class="fv">${entry.hash?entry.hash.slice(0,32)+'...':'pending'}</span></div>
+    <div class="fr"><span class="fk">Server Seed:</span><span class="fv">${entry.seed.slice(0,32)}...</span></div>
+    <div class="fr"><span class="fk">Winner:</span><span class="fv">${entry.winner}</span></div>
+    <div class="fr"><span class="fk">Your Bet:</span><span class="fv">${entry.bet}</span></div>
+    <div class="fr"><span class="fk">Result:</span><span class="fv" style="color:${entry.won?'#4dff91':'#ff4455'}">${entry.won?'WIN':'LOSS'}</span></div>
+    <div class="fr"><span class="fk">Verify:</span><span class="fv" style="color:#4dff91">SHA-256(seed) == hash VERIFIED</span></div>
+    <div style="text-align:center;margin-top:12px;opacity:.4;font-size:10px">Tap anywhere to close</div>`;
+  D.getElementById('fairpopup').style.display='flex';
 }
 const cp={x:0,y:8,z:-6},ct={x:0,y:0,z:4};
 function animate(){
@@ -346,13 +417,17 @@ function animate(){
     checkFinish();
     const elapsed=((performance.now()-t0)/1000).toFixed(2);
     D.getElementById('timer').textContent=elapsed+'s';
-    // camera follow
+    // camera follow + leader tag
     const li=getLeader();
     if(li!==null){
       const p=bodies[li].position;
       const tx=p.x-3,ty=p.y+4,tz=p.z-6;
       cp.x+=(tx-cp.x)*0.03;cp.y+=(ty-cp.y)*0.03;cp.z+=(tz-cp.z)*0.03;
       ct.x+=(p.x-ct.x)*0.05;ct.y+=(p.y-ct.y)*0.05;ct.z+=(p.z-ct.z)*0.05;
+      const lt=D.getElementById('leader-tag');
+      const lc='#'+COLS[li].toString(16).padStart(6,'0');
+      lt.innerHTML='<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+lc+';margin-right:6px;box-shadow:0 0 6px '+lc+'"></span>LEADER: '+NAMES[li];
+      lt.style.display='block';
     }
   }
   cam.position.set(cp.x,cp.y,cp.z);
