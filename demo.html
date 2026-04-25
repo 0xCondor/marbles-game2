@@ -92,13 +92,12 @@ import*as C from'cannon-es';
 const PI=Math.PI,W=window,D=document;
 const NAMES=['Ruby','Ember','Solar','Jade','Aqua','Cobalt','Violet','Orchid','Blush','Onyx','Pearl','Lime'];
 const COLS=[0xff2244,0xff6622,0xffaa00,0x22cc66,0x22dddd,0x3366ff,0x8833ff,0xff44cc,0xff6699,0x222233,0xeeeeff,0x88ff22];
-const SEGS=5,SL=18,SW=3.2,WT=0.25,MR=0.3,MN=12;
-const YAW=[0,18,-18,-18,18],TILT=22;
+const RL=60,RW=6,TILT_DEG=20,MR=0.3,MN=12;
 let scene,cam,renderer,world,marbles=[],bodies=[],lights=[];
 let finished=[],raceOn=false,t0=0,done=false;
 let playerBal=1000,playerBet=-1,playerAmt=0,betLocked=false;
 let roundHistory=[],roundSeedHex='',roundSeedHash='',roundId=0;
-// Web Audio
+let finishZ=0;
 let audioCtx=null;
 function beep(freq,dur,vol=0.15){
   if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();
@@ -113,95 +112,66 @@ function sfxTick(){beep(880,0.1)}
 function sfxGo(){beep(1320,0.2,0.2)}
 function sfxWin(){beep(660,0.15);setTimeout(()=>beep(880,0.15),150);setTimeout(()=>beep(1100,0.3,0.2),300)}
 function sfxLose(){beep(220,0.3,0.1)}
-// Track geometry
-function bSeg(i,ox,oz,a){
-  const ra=a*PI/180,tr=-TILT*PI/180;
-  const g=new T.Group();g.position.set(ox,0,oz);g.rotation.y=ra;
-  // deck
-  const dm=new T.MeshStandardMaterial({color:0x1a1e2e,metalness:.5,roughness:.3});
-  const dk=new T.Mesh(new T.BoxGeometry(SW,0.15,SL),dm);
-  dk.position.set(0,-.08,SL/2);dk.rotation.x=tr;dk.receiveShadow=true;g.add(dk);
-  // walls
-  const wm=new T.MeshStandardMaterial({color:0x12141f,metalness:.4,roughness:.4});
-  for(let s=-1;s<=1;s+=2){
-    const w=new T.Mesh(new T.BoxGeometry(WT,0.5,SL),wm);
-    w.position.set(s*(SW/2+WT/2),0.15,SL/2);w.rotation.x=tr;w.receiveShadow=true;g.add(w);
-    // neon strip
-    const nc=s<0?0x00ccff:0xff00cc;
-    const nm=new T.MeshStandardMaterial({color:nc,emissive:nc,emissiveIntensity:3});
-    const ns=new T.Mesh(new T.BoxGeometry(WT,0.04,SL),nm);
-    ns.position.set(s*(SW/2+WT/2),0.42,SL/2);ns.rotation.x=tr;g.add(ns);
-  }
-  scene.add(g);
-  // physics
-  const cy=Math.cos(tr),sy=Math.sin(tr),ca=Math.cos(ra),sa=Math.sin(ra);
-  const cz=SL/2*ca,cx=-SL/2*sa;
-  const addB=(px,py,pz,sx2,sy2,sz2)=>{
-    const b=new C.Body({mass:0,shape:new C.Box(new C.Vec3(sx2,sy2,sz2))});
-    const q=new C.Quaternion();q.setFromEuler(tr,ra,0,'YXZ');
-    b.quaternion.copy(q);
-    b.position.set(ox+px*ca-pz*sa,py*cy-pz*sy*0+py*0+(-pz*sy+py*cy)*0+py, oz+px*sa+pz*ca);
-    // simplified pos
-    const lx=px,ly=py,lz=pz;
-    const ry=ly*cy-lz*sy,rz=ly*sy+lz*cy;
-    b.position.set(ox+lx*ca-rz*sa,ry,oz+lx*sa+rz*ca);
-    world.addBody(b);
-  };
-  addB(0,-0.08,SL/2,SW/2,0.08,SL/2);
-  addB(-SW/2-WT/2,0.15,SL/2,WT/2,0.25,SL/2);
-  addB(SW/2+WT/2,0.15,SL/2,WT/2,0.25,SL/2);
-  // return end pos
-  const ez=SL*cy,ey=-SL*sy;
-  return{x:ox-SL*sa*1,y:ey,z:oz+SL*ca*1,a:a};
+function addBox(pos,size,rot,color,emissive=null,emInt=0){
+  const mat=new T.MeshStandardMaterial({color,metalness:.5,roughness:.3});
+  if(emissive){mat.emissive=new T.Color(emissive);mat.emissiveIntensity=emInt}
+  const mesh=new T.Mesh(new T.BoxGeometry(size.x,size.y,size.z),mat);
+  mesh.position.copy(pos);mesh.rotation.set(rot.x,rot.y,rot.z);
+  mesh.receiveShadow=true;scene.add(mesh);
+  const body=new C.Body({mass:0,shape:new C.Box(new C.Vec3(size.x/2,size.y/2,size.z/2))});
+  body.position.set(pos.x,pos.y,pos.z);
+  const q=new C.Quaternion();q.setFromEuler(rot.x,rot.y,rot.z);
+  body.quaternion.copy(q);
+  world.addBody(body);
+  return{mesh,body};
 }
 function init(){
-  // renderer
   renderer=new T.WebGLRenderer({antialias:true});
   renderer.setSize(W.innerWidth,W.innerHeight);
   renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-  renderer.shadowMap.enabled=true;
-  renderer.shadowMap.type=T.PCFSoftShadowMap;
-  renderer.toneMapping=T.ACESFilmicToneMapping;
-  renderer.toneMappingExposure=1.2;
+  renderer.shadowMap.enabled=true;renderer.shadowMap.type=T.PCFSoftShadowMap;
+  renderer.toneMapping=T.ACESFilmicToneMapping;renderer.toneMappingExposure=1.2;
   D.body.prepend(renderer.domElement);
-  // scene
   scene=new T.Scene();
   scene.background=new T.Color(0x080a14);
-  scene.fog=new T.FogExp2(0x0c0818,0.006);
-  // camera
+  scene.fog=new T.FogExp2(0x0c0818,0.004);
   cam=new T.PerspectiveCamera(55,W.innerWidth/W.innerHeight,0.1,500);
-  cam.position.set(0,8,-6);
-  // lights
-  const sl=new T.SpotLight(0xffffff,3,0,PI/5,0.5);
-  sl.position.set(0,30,20);sl.castShadow=true;
-  sl.shadow.mapSize.set(1024,1024);scene.add(sl);
-  scene.add(new T.HemisphereLight(0x334466,0x080810,0.3));
+  cam.position.set(0,15,25);
+  const sl=new T.SpotLight(0xffffff,4,200,PI/4,0.5);
+  sl.position.set(-10,40,10);sl.castShadow=true;sl.shadow.mapSize.set(1024,1024);
+  scene.add(sl);
+  scene.add(new T.HemisphereLight(0x446688,0x080810,0.5));
   // ground
   const gm=new T.Mesh(new T.PlaneGeometry(200,200),new T.MeshStandardMaterial({color:0x0a0c14,metalness:.7,roughness:.2}));
-  gm.rotation.x=-PI/2;gm.position.y=-1;gm.receiveShadow=true;scene.add(gm);
-  // physics world
-  world=new C.World({gravity:new C.Vec3(0,-40,0)});
-  world.broadphase=new C.NaiveBroadphase();
+  gm.rotation.x=-PI/2;gm.position.y=-15;gm.receiveShadow=true;scene.add(gm);
+  // physics
+  world=new C.World({gravity:new C.Vec3(0,-30,0)});
+  world.broadphase=new C.SAPBroadphase(world);
+  world.defaultContactMaterial.friction=0.3;
+  world.defaultContactMaterial.restitution=0.3;
   const gp=new C.Body({mass:0,shape:new C.Plane()});
-  gp.quaternion.setFromEuler(-PI/2,0,0);gp.position.y=-1;world.addBody(gp);
-  // build track
-  let ox=0,oz=0,ang=0;
-  const segs=[];
-  for(let i=0;i<SEGS;i++){
-    ang+=YAW[i];
-    const s=bSeg(i,ox,oz,ang);
-    segs.push({sx:ox,sz:oz,ex:s.x,ey:s.y,ez:s.z,a:ang});
-    ox=s.x;oz=s.z;
-  }
-  // finish line
-  const la=segs[SEGS-1];
-  const fa=la.a*PI/180;
+  gp.quaternion.setFromEuler(-PI/2,0,0);gp.position.y=-15;world.addBody(gp);
+  // RAMP: simple tilted box — same rotation for Three.js and Cannon-es
+  const tiltRad=-TILT_DEG*PI/180;
+  addBox(new T.Vector3(0,0,0),new T.Vector3(RW,0.5,RL),new T.Vector3(tiltRad,0,0),0x1a1e2e);
+  // walls
+  addBox(new T.Vector3(-RW/2-0.15,0.5,0),new T.Vector3(0.3,1.5,RL),new T.Vector3(tiltRad,0,0),0x12141f);
+  addBox(new T.Vector3(RW/2+0.15,0.5,0),new T.Vector3(0.3,1.5,RL),new T.Vector3(tiltRad,0,0),0x12141f);
+  // neon strips on top of walls
+  const nL=new T.Mesh(new T.BoxGeometry(0.15,0.06,RL),new T.MeshStandardMaterial({color:0x00ccff,emissive:0x00ccff,emissiveIntensity:4}));
+  nL.position.set(-RW/2-0.15,1.28,0);nL.rotation.x=tiltRad;scene.add(nL);
+  const nR=new T.Mesh(new T.BoxGeometry(0.15,0.06,RL),new T.MeshStandardMaterial({color:0xff00cc,emissive:0xff00cc,emissiveIntensity:4}));
+  nR.position.set(RW/2+0.15,1.28,0);nR.rotation.x=tiltRad;scene.add(nR);
+  // finish line at downhill end
+  finishZ=-RL/2*Math.cos(tiltRad);
+  const finY=-RL/2*Math.sin(Math.abs(tiltRad));
   const fm=new T.MeshStandardMaterial({color:0xffd94a,emissive:0xffd94a,emissiveIntensity:1,transparent:true,opacity:0.6});
-  const fp=new T.Mesh(new T.PlaneGeometry(SW+1,0.3),fm);
-  fp.rotation.x=-PI/2;fp.rotation.z=-fa;
-  fp.position.set(la.ex,0.01,la.ez);scene.add(fp);
-  W._fm=fm;W._fz=la.ez;W._fx=la.ex;W._fa=fa;
-  // marbles
+  const fp=new T.Mesh(new T.PlaneGeometry(RW+1,2),fm);
+  fp.position.set(0,finY+1,finishZ);scene.add(fp);
+  W._fm=fm;
+  // spawn marbles at uphill end
+  const spawnZ=RL/2*Math.cos(Math.abs(tiltRad))-2;
+  const spawnY=RL/2*Math.sin(Math.abs(tiltRad))+1;
   for(let i=0;i<MN;i++){
     const c=COLS[i];
     const m=new T.Mesh(new T.SphereGeometry(MR,24,24),new T.MeshStandardMaterial({color:c,metalness:.8,roughness:.15}));
@@ -210,7 +180,7 @@ function init(){
     marbles.push(m);
     const b=new C.Body({mass:1,shape:new C.Sphere(MR),linearDamping:0.01,angularDamping:0.05});
     const row=Math.floor(i/4),col=i%4;
-    b.position.set(-1.2+col*0.8,1+row*0.7,1);
+    b.position.set(-1.2+col*0.8, spawnY+row*0.7, spawnZ-row*0.5);
     b.type=C.Body.STATIC;
     world.addBody(b);bodies.push(b);
   }
@@ -296,20 +266,16 @@ function startRace(){
   bodies.forEach(b=>{b.type=C.Body.DYNAMIC;b.wakeUp()});
 }
 function getLeader(){
-  let best=null,bz=-Infinity;
+  let best=null,bz=Infinity;
   for(let i=0;i<MN;i++){
-    if(bodies[i].position.z>bz){bz=bodies[i].position.z;best=i}
+    if(bodies[i].position.z<bz){bz=bodies[i].position.z;best=i}
   }
   return best;
 }
 function checkFinish(){
-  const fz=W._fz,fx=W._fx,fa=W._fa;
   for(let i=0;i<MN;i++){
     if(finished.includes(i))continue;
-    const p=bodies[i].position;
-    const dx=p.x-fx,dz=p.z-fz;
-    const along=dx*(-Math.sin(fa))+dz*Math.cos(fa);
-    if(along>1)finished.push(i);
+    if(bodies[i].position.z<finishZ)finished.push(i);
   }
   if(finished.length>0&&!done){
     done=true;
