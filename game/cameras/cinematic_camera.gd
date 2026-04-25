@@ -1,14 +1,6 @@
 class_name CinematicCamera
 extends Camera3D
 
-# Multi-mode cinematic camera for casino presentation. Modes:
-#   OVERVIEW  — frames the whole track (pre-race, buy-in)
-#   FOLLOW    — tracks the leading marble with smooth interpolation
-#   FINISH    — close-up on the finish line as marbles approach
-#   WINNER    — orbits the winning marble with slow-motion feel
-#
-# The race orchestrator sets the mode; transitions are smooth via lerp/slerp.
-
 enum Mode { OVERVIEW, FOLLOW, FINISH, WINNER }
 
 const SMOOTH_SPEED := 3.5
@@ -26,11 +18,13 @@ var _marbles: Array[RigidBody3D] = []
 var _winner: RigidBody3D = null
 var _orbit_angle := 0.0
 var _finish_pos := Vector3.ZERO
+var _bounds: AABB
 
 func setup(marbles: Array[RigidBody3D]) -> void:
 	_marbles = marbles
 	current = true
 	if track != null:
+		_bounds = track.camera_bounds()
 		_snap_to_overview()
 
 func set_mode(new_mode: Mode) -> void:
@@ -61,40 +55,29 @@ func _process(delta: float) -> void:
 func _snap_to_overview() -> void:
 	if track == null:
 		return
-	var bb := track.track_bounds()
-	var center := bb.get_center()
-	var extent := max(bb.size.x, bb.size.z) * 0.6
+	var center := _bounds.get_center()
+	var extent := max(_bounds.size.x, _bounds.size.z) * 0.6
 	global_position = center + Vector3(extent * 0.5, extent * 0.7, extent * 0.8)
 	look_at(center)
 
 func _update_overview(delta: float) -> void:
 	if track == null:
 		return
-	var bb := track.track_bounds()
-	var center := bb.get_center()
-	var extent := max(bb.size.x, bb.size.z) * 0.6
+	var center := _bounds.get_center()
+	var extent := max(_bounds.size.x, _bounds.size.z) * 0.6
 	var desired := center + Vector3(extent * 0.5, extent * 0.7, extent * 0.8)
 	global_position = global_position.lerp(desired, SMOOTH_SPEED * delta)
-	var look_target := center
-	var current_forward := -global_basis.z
-	var desired_forward := (look_target - global_position).normalized()
-	var blended := current_forward.lerp(desired_forward, SMOOTH_SPEED * delta).normalized()
-	look_at(global_position + blended)
+	look_at(global_position + (center - global_position).normalized())
 
 func _update_follow(delta: float) -> void:
 	if _marbles.is_empty():
 		return
 	var leader := _find_leader()
 	var leader_pos := leader.global_position
-
-	var offset := Vector3(0, FOLLOW_HEIGHT, FOLLOW_BEHIND)
-	if track != null:
-		var seg_idx := _nearest_segment(leader_pos)
-		var meta := track.segment_meta(seg_idx)
-		var forward: Vector3 = meta["forward"]
-		offset = -forward * FOLLOW_BEHIND + Vector3(0, FOLLOW_HEIGHT, 0)
-
-	var desired := leader_pos + offset
+	var vel := leader.linear_velocity.normalized() if leader.linear_velocity.length() > 0.5 else Vector3(0, 0, -1)
+	var behind := -vel * FOLLOW_BEHIND
+	behind.y = FOLLOW_HEIGHT
+	var desired := leader_pos + behind
 	global_position = global_position.lerp(desired, SMOOTH_SPEED * delta)
 	look_at(leader_pos)
 
@@ -127,47 +110,9 @@ func _update_winner(delta: float) -> void:
 
 func _find_leader() -> RigidBody3D:
 	var best := _marbles[0]
-	var best_progress := _marble_progress(best)
+	var best_y := best.global_position.y
 	for i in range(1, _marbles.size()):
-		var p := _marble_progress(_marbles[i])
-		if p > best_progress:
+		if _marbles[i].global_position.y < best_y:
 			best = _marbles[i]
-			best_progress = p
+			best_y = best.global_position.y
 	return best
-
-func _marble_progress(m: RigidBody3D) -> float:
-	if track == null:
-		return -m.global_position.z
-	return LeaderCamera._static_marble_progress(track, m.global_position)
-
-func _nearest_segment(pos: Vector3) -> int:
-	if track == null:
-		return 0
-	var best_idx := 0
-	var best_dist := INF
-	for i in range(track.segment_count()):
-		var meta := track.segment_meta(i)
-		var dist := pos.distance_to(meta["center"])
-		if dist < best_dist:
-			best_dist = dist
-			best_idx = i
-	return best_idx
-
-static func _static_marble_progress(t: Track, pos: Vector3) -> float:
-	var best_progress := 0.0
-	var best_dist := INF
-	var cumulative := 0.0
-	for i in range(t.segment_count()):
-		var meta := t.segment_meta(i)
-		var center: Vector3 = meta["center"]
-		var forward: Vector3 = meta["forward"]
-		var length: float = meta["length"]
-		var local_forward := forward.dot(pos - center)
-		var clamped := clampf(local_forward, -length * 0.5, length * 0.5)
-		var projected := center + forward * clamped
-		var dist := pos.distance_to(projected)
-		if dist < best_dist:
-			best_dist = dist
-			best_progress = cumulative + clamped + length * 0.5
-		cumulative += length
-	return best_progress

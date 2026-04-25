@@ -39,3 +39,13 @@ func get_winner() -> RigidBody3D:
 
 func get_crossings() -> Dictionary:
 	return _crossed
+
+func get_placements() -> Array[RigidBody3D]:
+	var pairs: Array = []
+	for marble in _crossed:
+		pairs.append([marble, _crossed[marble]])
+	pairs.sort_custom(func(a, b): return a[1] < b[1])
+	var result: Array[RigidBody3D] = []
+	for p in pairs:
+		result.append(p[0])
+	return result
