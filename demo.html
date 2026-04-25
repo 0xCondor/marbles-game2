@@ -115,7 +115,7 @@ function sfxWin(){beep(660,0.15);setTimeout(()=>beep(880,0.15),150);setTimeout((
 function sfxLose(){beep(220,0.3,0.1)}
 // Track geometry
 function bSeg(i,ox,oz,a){
-  const ra=a*PI/180,tr=TILT*PI/180*(i%2?1:-1);
+  const ra=a*PI/180,tr=-TILT*PI/180;
   const g=new T.Group();g.position.set(ox,0,oz);g.rotation.y=ra;
   // deck
   const dm=new T.MeshStandardMaterial({color:0x1a1e2e,metalness:.5,roughness:.3});
@@ -180,7 +180,7 @@ function init(){
   const gm=new T.Mesh(new T.PlaneGeometry(200,200),new T.MeshStandardMaterial({color:0x0a0c14,metalness:.7,roughness:.2}));
   gm.rotation.x=-PI/2;gm.position.y=-1;gm.receiveShadow=true;scene.add(gm);
   // physics world
-  world=new C.World({gravity:new C.Vec3(0,-9.82,0)});
+  world=new C.World({gravity:new C.Vec3(0,-20,0)});
   world.broadphase=new C.NaiveBroadphase();
   const gp=new C.Body({mass:0,shape:new C.Plane()});
   gp.quaternion.setFromEuler(-PI/2,0,0);gp.position.y=-1;world.addBody(gp);
