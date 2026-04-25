@@ -92,7 +92,7 @@ import*as C from'cannon-es';
 const PI=Math.PI,W=window,D=document;
 const NAMES=['Ruby','Ember','Solar','Jade','Aqua','Cobalt','Violet','Orchid','Blush','Onyx','Pearl','Lime'];
 const COLS=[0xff2244,0xff6622,0xffaa00,0x22cc66,0x22dddd,0x3366ff,0x8833ff,0xff44cc,0xff6699,0x222233,0xeeeeff,0x88ff22];
-const RL=120,RW=6,TILT_DEG=10,MR=0.3,MN=12;
+const RL=80,RW=6,TILT_DEG=15,MR=0.3,MN=12;
 let scene,cam,renderer,world,marbles=[],bodies=[],lights=[];
 let finished=[],raceOn=false,t0=0,done=false;
 let playerBal=1000,playerBet=-1,playerAmt=0,betLocked=false;
@@ -136,21 +136,22 @@ function init(){
   scene.background=new T.Color(0x080a14);
   scene.fog=new T.FogExp2(0x0c0818,0.004);
   cam=new T.PerspectiveCamera(55,W.innerWidth/W.innerHeight,0.1,500);
-  cam.position.set(0,15,25);
-  const sl=new T.SpotLight(0xffffff,4,200,PI/4,0.5);
-  sl.position.set(-10,40,10);sl.castShadow=true;sl.shadow.mapSize.set(1024,1024);
-  scene.add(sl);
+  cam.position.set(0,20,50);
+  spotlight=new T.SpotLight(0xffffff,4,200,PI/4,0.5);
+  spotlight.position.set(-10,40,10);spotlight.castShadow=true;spotlight.shadow.mapSize.set(1024,1024);
+  scene.add(spotlight);scene.add(spotlight.target);
   scene.add(new T.HemisphereLight(0x446688,0x080810,0.5));
   // ground
   const gm=new T.Mesh(new T.PlaneGeometry(200,200),new T.MeshStandardMaterial({color:0x0a0c14,metalness:.7,roughness:.2}));
-  gm.rotation.x=-PI/2;gm.position.y=-15;gm.receiveShadow=true;scene.add(gm);
+  gm.rotation.x=-PI/2;gm.position.y=-5;gm.receiveShadow=true;scene.add(gm);
   // physics
-  world=new C.World({gravity:new C.Vec3(0,-15,0)});
+  world=new C.World({gravity:new C.Vec3(0,-20,0)});
+  let spotlight;
   world.broadphase=new C.SAPBroadphase(world);
   world.defaultContactMaterial.friction=0.4;
   world.defaultContactMaterial.restitution=0.35;
   const gp=new C.Body({mass:0,shape:new C.Plane()});
-  gp.quaternion.setFromEuler(-PI/2,0,0);gp.position.y=-15;world.addBody(gp);
+  gp.quaternion.setFromEuler(-PI/2,0,0);gp.position.y=-5;world.addBody(gp);
   // RAMP: simple tilted box — same rotation for Three.js and Cannon-es
   const tiltRad=-TILT_DEG*PI/180;
   addBox(new T.Vector3(0,0,0),new T.Vector3(RW,0.5,RL),new T.Vector3(tiltRad,0,0),0x1a1e2e);
@@ -162,36 +163,24 @@ function init(){
   nL.position.set(-RW/2-0.15,1.28,0);nL.rotation.x=tiltRad;scene.add(nL);
   const nR=new T.Mesh(new T.BoxGeometry(0.15,0.06,RL),new T.MeshStandardMaterial({color:0xff00cc,emissive:0xff00cc,emissiveIntensity:4}));
   nR.position.set(RW/2+0.15,1.28,0);nR.rotation.x=tiltRad;scene.add(nR);
-  // bumpers — cylindrical pegs along the track for chaos and overtakes
+  // bumpers on the ramp surface — positions in ramp-local coords then projected
   const bumperMat=new T.MeshStandardMaterial({color:0x66d9ff,emissive:0x00aaff,emissiveIntensity:2,metalness:0.8,roughness:0.2});
-  const bumperGeo=new T.CylinderGeometry(0.25,0.25,1.2,12);
-  const tiltCos=Math.cos(Math.abs(tiltRad)),tiltSin=Math.sin(Math.abs(tiltRad));
-  const bumperPositions=[
-    // row 1
-    {x:-1.5,z:15},{x:0.5,z:15},{x:2.0,z:15},
-    // row 2
-    {x:-2.0,z:6},{x:-0.3,z:6},{x:1.2,z:6},{x:2.5,z:6},
-    // row 3
-    {x:-1.0,z:-3},{x:1.0,z:-3},{x:2.2,z:-3},
-    // row 4
-    {x:-2.2,z:-12},{x:-0.5,z:-12},{x:1.5,z:-12},
-    // row 5
-    {x:-1.8,z:-21},{x:0,z:-21},{x:1.8,z:-21},
-    // row 6
-    {x:-1.0,z:-30},{x:0.8,z:-30},{x:2.5,z:-30},
-    // row 7
-    {x:-2.5,z:-39},{x:-0.3,z:-39},{x:1.2,z:-39},
-    // row 8
-    {x:-1.5,z:-48},{x:0.5,z:-48},{x:2.0,z:-48},
-  ];
-  for(const bp of bumperPositions){
-    const bpy=bp.z*(-tiltSin)+0.6;
-    const bpz=bp.z*tiltCos;
-    const bm=new T.Mesh(bumperGeo,bumperMat);
-    bm.position.set(bp.x,bpy,bpz);bm.castShadow=true;scene.add(bm);
-    const bb=new C.Body({mass:0,shape:new C.Cylinder(0.25,0.25,1.2,8)});
-    bb.position.set(bp.x,bpy,bpz);
-    world.addBody(bb);
+  const bumperGeo=new T.CylinderGeometry(0.25,0.25,1.0,12);
+  const tc=Math.cos(Math.abs(tiltRad)),ts=Math.sin(Math.abs(tiltRad));
+  // 8 rows evenly spaced from 20% to 85% of ramp length
+  for(let row=0;row<8;row++){
+    const frac=0.2+row*0.093;
+    const localZ=(0.5-frac)*RL;
+    const worldZ=localZ*tc;
+    const worldY=localZ*ts+0.75;
+    const cols=row%2===0?[-1.8,0,1.8]:[-2.2,-0.5,1.2,2.5];
+    for(const cx of cols){
+      const bm=new T.Mesh(bumperGeo,bumperMat);
+      bm.position.set(cx,worldY,worldZ);scene.add(bm);
+      const bb=new C.Body({mass:0,shape:new C.Cylinder(0.25,0.25,1.0,8)});
+      bb.position.set(cx,worldY,worldZ);
+      world.addBody(bb);
+    }
   }
   // finish line at downhill end
   finishZ=-RL/2*Math.cos(tiltRad);
@@ -401,7 +390,8 @@ function showFairPopup(entry){
     <div style="text-align:center;margin-top:12px;opacity:.4;font-size:10px">Tap anywhere to close</div>`;
   D.getElementById('fairpopup').style.display='flex';
 }
-const cp={x:0,y:8,z:-6},ct={x:0,y:0,z:4};
+let camPos=new T.Vector3(0,20,50),camLook=new T.Vector3(0,10,40);
+let camInited=false;
 function animate(){
   requestAnimationFrame(animate);
   if(raceOn){
@@ -414,22 +404,27 @@ function animate(){
     checkFinish();
     const elapsed=((performance.now()-t0)/1000).toFixed(2);
     D.getElementById('timer').textContent=elapsed+'s';
-    // camera follow + leader tag
-    const li=getLeader();
-    if(li!==null){
-      const p=bodies[li].position;
-      const tx=p.x-3,ty=p.y+4,tz=p.z-6;
-      cp.x+=(tx-cp.x)*0.03;cp.y+=(ty-cp.y)*0.03;cp.z+=(tz-cp.z)*0.03;
-      ct.x+=(p.x-ct.x)*0.05;ct.y+=(p.y-ct.y)*0.05;ct.z+=(p.z-ct.z)*0.05;
-      const lt=D.getElementById('leader-tag');
-      const lc='#'+COLS[li].toString(16).padStart(6,'0');
-      lt.innerHTML='<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+lc+';margin-right:6px;box-shadow:0 0 6px '+lc+'"></span>LEADER: '+NAMES[li];
-      lt.style.display='block';
-    }
   }
-  cam.position.set(cp.x,cp.y,cp.z);
-  cam.lookAt(ct.x,ct.y,ct.z);
-  // pulse finish
+  // Camera: always follow leader (or spawn area before race)
+  const li=getLeader();
+  if(li!==null){
+    const lp=bodies[li].position;
+    // Camera behind and above the leader, looking down the ramp
+    const targetCam=new T.Vector3(lp.x+4,lp.y+6,lp.z+12);
+    const targetLook=new T.Vector3(lp.x,lp.y,lp.z);
+    if(!camInited){camPos.copy(targetCam);camLook.copy(targetLook);camInited=true}
+    camPos.lerp(targetCam,0.06);
+    camLook.lerp(targetLook,0.08);
+    // Move spotlight to follow action
+    if(spotlight){spotlight.position.set(lp.x,lp.y+25,lp.z+5);spotlight.target.position.copy(targetLook)}
+    // Leader tag
+    const lt=D.getElementById('leader-tag');
+    const lc='#'+COLS[li].toString(16).padStart(6,'0');
+    lt.innerHTML='<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+lc+';margin-right:6px;box-shadow:0 0 6px '+lc+'"></span>LEADER: '+NAMES[li];
+    lt.style.display='block';
+  }
+  cam.position.copy(camPos);
+  cam.lookAt(camLook);
   if(W._fm)W._fm.emissiveIntensity=1+Math.sin(performance.now()/1000*3)*0.5;
   renderer.render(scene,cam);
 }
