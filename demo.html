@@ -93,7 +93,7 @@ const PI=Math.PI,W=window,D=document;
 const NAMES=['Ruby','Ember','Solar','Jade','Aqua','Cobalt','Violet','Orchid','Blush','Onyx','Pearl','Lime'];
 const COLS=[0xff2244,0xff6622,0xffaa00,0x22cc66,0x22dddd,0x3366ff,0x8833ff,0xff44cc,0xff6699,0x222233,0xeeeeff,0x88ff22];
 const SEGS=5,SL=18,SW=3.2,WT=0.25,MR=0.3,MN=12;
-const YAW=[0,18,-18,-18,18],TILT=14;
+const YAW=[0,18,-18,-18,18],TILT=22;
 let scene,cam,renderer,world,marbles=[],bodies=[],lights=[];
 let finished=[],raceOn=false,t0=0,done=false;
 let playerBal=1000,playerBet=-1,playerAmt=0,betLocked=false;
@@ -180,7 +180,7 @@ function init(){
   const gm=new T.Mesh(new T.PlaneGeometry(200,200),new T.MeshStandardMaterial({color:0x0a0c14,metalness:.7,roughness:.2}));
   gm.rotation.x=-PI/2;gm.position.y=-1;gm.receiveShadow=true;scene.add(gm);
   // physics world
-  world=new C.World({gravity:new C.Vec3(0,-20,0)});
+  world=new C.World({gravity:new C.Vec3(0,-40,0)});
   world.broadphase=new C.NaiveBroadphase();
   const gp=new C.Body({mass:0,shape:new C.Plane()});
   gp.quaternion.setFromEuler(-PI/2,0,0);gp.position.y=-1;world.addBody(gp);
@@ -208,7 +208,7 @@ function init(){
     m.castShadow=true;scene.add(m);
     const pl=new T.PointLight(c,0.5,3);m.add(pl);lights.push(pl);
     marbles.push(m);
-    const b=new C.Body({mass:1,shape:new C.Sphere(MR),linearDamping:0.1,angularDamping:0.3});
+    const b=new C.Body({mass:1,shape:new C.Sphere(MR),linearDamping:0.01,angularDamping:0.05});
     const row=Math.floor(i/4),col=i%4;
     b.position.set(-1.2+col*0.8,1+row*0.7,1);
     b.type=C.Body.STATIC;
