@@ -29,6 +29,24 @@ canvas{display:block}
 #results .ri{color:#666;width:18px;text-align:right;font-size:11px}
 #results .rd{width:10px;height:10px;border-radius:50%;flex-shrink:0}
 #brand{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);font-size:11px;color:rgba(255,255,255,.25);letter-spacing:3px;z-index:10}
+#betpanel{position:fixed;left:12px;top:50%;transform:translateY(-50%);width:200px;padding:16px;z-index:15;display:none}
+#betpanel h3{color:#ffd94a;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+#balance{color:#4dff91;font-size:13px;margin-bottom:10px}
+#mgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:12px}
+.mchip{border-radius:8px;padding:6px 4px;text-align:center;font-size:10px;cursor:pointer;border:2px solid transparent;transition:border-color .2s,box-shadow .2s;color:#fff;text-shadow:0 1px 2px #000}
+.mchip:hover{border-color:rgba(255,255,255,.4)}
+.mchip.sel{border-color:#ffd94a;box-shadow:0 0 12px rgba(255,217,74,.4)}
+#betamt{width:100%;padding:8px 10px;background:rgba(20,24,40,.8);border:1px solid rgba(100,140,255,.2);border-radius:8px;color:#fff;font-size:14px;margin-bottom:8px;text-align:center}
+#betbtn{width:100%;padding:10px;background:linear-gradient(135deg,#2a6df4,#5533ff);color:#fff;border:0;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;transition:opacity .2s}
+#betbtn:hover{opacity:.85}
+#betbtn:disabled{background:#333;cursor:default;opacity:.5}
+#betresult{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(0);padding:24px 40px;text-align:center;z-index:25;border-radius:16px;transition:transform .4s cubic-bezier(.17,.67,.35,1.3);pointer-events:none}
+#betresult.show{transform:translate(-50%,-50%) scale(1)}
+#betresult.win{border:2px solid #4dff91}
+#betresult.lose{border:2px solid #ff4455}
+#betresult h3{font-size:24px;margin-bottom:6px}
+#betresult .amt{font-size:28px;font-weight:700;margin-top:4px}
+#yourpick{position:fixed;left:12px;bottom:50px;padding:8px 14px;z-index:10;display:none;font-size:12px}
 </style>
 </head>
 <body>
@@ -41,6 +59,15 @@ canvas{display:block}
 <div id="countdown"></div>
 <div id="winner" class="panel"><h2>WINNER</h2><div id="winfo"></div><div class="payout" id="wpay"></div></div>
 <div id="results" class="panel"><h3>Results</h3><ol id="rlist"></ol></div>
+<div id="betpanel" class="panel">
+  <h3>Place Your Bet</h3>
+  <div id="balance">Balance: $1,000.00</div>
+  <div id="mgrid"></div>
+  <input id="betamt" type="number" value="100" min="1" max="1000" step="10">
+  <button id="betbtn" disabled>SELECT A MARBLE</button>
+</div>
+<div id="betresult" class="panel"><h3 id="brTitle"></h3><div id="brMarble"></div><div class="amt" id="brAmt"></div></div>
+<div id="yourpick" class="panel"></div>
 <div id="brand">MARBLES &nbsp;|&nbsp; Provably Fair</div>
 <script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/","cannon-es":"https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js"}}</script>
 <script type="module">
@@ -53,6 +80,7 @@ const SEGS=5,SL=18,SW=3.2,WT=0.25,MR=0.3,MN=12;
 const YAW=[0,18,-18,-18,18],TILT=14;
 let scene,cam,renderer,world,marbles=[],bodies=[],lights=[];
 let finished=[],raceOn=false,t0=0,done=false;
+let playerBal=1000,playerBet=-1,playerAmt=0,betLocked=false;
 // Track geometry
 function bSeg(i,ox,oz,a){
   const ra=a*PI/180,tr=TILT*PI/180*(i%2?1:-1);
@@ -156,8 +184,57 @@ function init(){
   }
   D.getElementById('count').textContent=MN+'/'+MN;
   W.addEventListener('resize',()=>{cam.aspect=W.innerWidth/W.innerHeight;cam.updateProjectionMatrix();renderer.setSize(W.innerWidth,W.innerHeight)});
-  countdown();
+  buildBetPanel();
   animate();
+}
+function buildBetPanel(){
+  const grid=D.getElementById('mgrid'),btn=D.getElementById('betbtn');
+  D.getElementById('betpanel').style.display='block';
+  D.getElementById('status').textContent='BUY-IN';
+  D.getElementById('status').style.color='#4dff91';
+  for(let i=0;i<MN;i++){
+    const c='#'+COLS[i].toString(16).padStart(6,'0');
+    const ch=D.createElement('div');
+    ch.className='mchip';
+    ch.style.background=c;
+    ch.textContent=NAMES[i];
+    ch.onclick=()=>{
+      if(betLocked)return;
+      playerBet=i;
+      grid.querySelectorAll('.mchip').forEach(x=>x.classList.remove('sel'));
+      ch.classList.add('sel');
+      btn.disabled=false;
+      btn.textContent='BET ON '+NAMES[i].toUpperCase();
+    };
+    grid.appendChild(ch);
+  }
+  btn.onclick=()=>{
+    if(playerBet<0||betLocked)return;
+    playerAmt=Math.min(Math.max(parseFloat(D.getElementById('betamt').value)||0,1),playerBal);
+    playerBal-=playerAmt;
+    betLocked=true;
+    btn.textContent='BET PLACED!';
+    btn.disabled=true;
+    D.getElementById('balance').textContent='Balance: $'+playerBal.toFixed(2);
+    D.getElementById('betamt').disabled=true;
+    // show pick indicator
+    const pc=D.getElementById('yourpick');
+    const cc='#'+COLS[playerBet].toString(16).padStart(6,'0');
+    pc.innerHTML='YOUR PICK: <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:'+cc+';margin:0 4px;box-shadow:0 0 6px '+cc+'"></span>'+NAMES[playerBet]+' ($'+playerAmt.toFixed(0)+')';
+    pc.style.display='block';
+    // start countdown after 2s
+    setTimeout(()=>{
+      D.getElementById('betpanel').style.display='none';
+      countdown();
+    },1500);
+  };
+  // Auto-start if no bet after 15s
+  setTimeout(()=>{
+    if(!betLocked){
+      D.getElementById('betpanel').style.display='none';
+      countdown();
+    }
+  },15000);
 }
 function countdown(){
   const el=D.getElementById('countdown'),st=D.getElementById('status');
@@ -207,9 +284,43 @@ function showWinner(i){
   const el=D.getElementById('winner'),inf=D.getElementById('winfo'),pay=D.getElementById('wpay');
   const c='#'+COLS[i].toString(16).padStart(6,'0');
   inf.innerHTML=`<span class="dot" style="background:${c};color:${c}"></span><span style="font-size:22px">${NAMES[i]}</span>`;
-  pay.textContent='Payout: $'+((1200*0.9)|0);
+  const potTotal=MN*100;
+  const houseCut=0.05;
+  const prize=potTotal*(1-houseCut);
+  pay.textContent='Prize: $'+prize.toFixed(0);
   setTimeout(()=>el.classList.add('show'),300);
-  setTimeout(()=>{el.classList.remove('show');showResults()},4000);
+  // Show bet result after winner
+  setTimeout(()=>{
+    el.classList.remove('show');
+    if(playerBet>=0&&playerAmt>0){
+      showBetResult(i);
+    }else{
+      showResults();
+    }
+  },3500);
+}
+function showBetResult(winnerIdx){
+  const br=D.getElementById('betresult'),title=D.getElementById('brTitle'),marble=D.getElementById('brMarble'),amt=D.getElementById('brAmt');
+  const won=playerBet===winnerIdx;
+  br.className='panel '+(won?'win show':'lose show');
+  const cc='#'+COLS[playerBet].toString(16).padStart(6,'0');
+  marble.innerHTML='<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:'+cc+';margin-right:6px;box-shadow:0 0 8px '+cc+'"></span>'+NAMES[playerBet];
+  if(won){
+    const payout=playerAmt*MN*(1-0.05);
+    playerBal+=payout;
+    title.textContent='YOU WIN!';
+    title.style.color='#4dff91';
+    amt.textContent='+$'+payout.toFixed(2);
+    amt.style.color='#4dff91';
+  }else{
+    title.textContent='YOU LOST';
+    title.style.color='#ff4455';
+    amt.textContent='-$'+playerAmt.toFixed(2);
+    amt.style.color='#ff4455';
+  }
+  D.getElementById('balance').textContent='Balance: $'+playerBal.toFixed(2);
+  setTimeout(()=>br.classList.remove('show'),4000);
+  setTimeout(showResults,4500);
 }
 function showResults(){
   const el=D.getElementById('results'),ol=D.getElementById('rlist');
